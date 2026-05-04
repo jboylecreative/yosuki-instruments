@@ -1,4 +1,4 @@
-"""Entry point — run with: uvicorn app:app --reload"""
+"""Entry point — run with: uvicorn server:app --reload"""
 import sys
 from pathlib import Path
 

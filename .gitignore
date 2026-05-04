@@ -1,0 +1,10 @@
+.env
+*.pyc
+__pycache__/
+node_modules/
+uploads/
+generated/
+output/
+data/
+*.aep
+google_service_account.json
