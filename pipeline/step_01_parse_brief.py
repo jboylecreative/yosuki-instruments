@@ -67,7 +67,7 @@ BRIEF_SCHEMA = """
 
 def _gemini_client():
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    return genai.GenerativeModel("gemini-2.0-flash-exp")
+    return genai.GenerativeModel("gemini-3.1-pro-preview")
 
 
 def _pdf_to_base64(path: Path) -> str:

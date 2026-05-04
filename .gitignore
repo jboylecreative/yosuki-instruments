@@ -6,5 +6,5 @@ uploads/
 generated/
 output/
 data/
-*.aep
+output/*.aep
 google_service_account.json
