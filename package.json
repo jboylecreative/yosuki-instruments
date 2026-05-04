@@ -1,0 +1,9 @@
+{
+  "name": "yosuki-pipeline",
+  "version": "1.0.0",
+  "description": "Yosuki motion graphics pipeline - nexrender batch rendering",
+  "dependencies": {
+    "@nexrender/cli": "^1.0.0",
+    "@nexrender/action-copy": "^1.0.0"
+  }
+}

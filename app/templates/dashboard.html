@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yosuki Motion Graphics Pipeline</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Yosuki Motion Graphics Pipeline</h1>
+    <nav><a href="/">Setup</a> <a href="/results">Results</a></nav>
+  </header>
+
+  <main>
+
+    <!-- ── Step 1: Upload Brief ── -->
+    <section class="card {% if brief_uploaded %}done{% endif %}">
+      <h2><span class="step">1</span> Upload Campaign Brief</h2>
+      {% if brief_uploaded %}
+        <p class="status ok">Brief parsed ✓ — <a href="/data/campaign_brief.json" target="_blank">view JSON</a></p>
+      {% endif %}
+      <div class="upload-area" id="brief-drop">
+        <p>Drop brief PDF here or <label for="brief-file" class="link">browse</label></p>
+        <input type="file" id="brief-file" accept=".pdf" hidden>
+      </div>
+      <button id="parse-brief-btn" class="btn primary" {% if not brief_uploaded %}disabled{% endif %}>
+        Parse Brief with Gemini
+      </button>
+    </section>
+
+    <!-- ── Step 2: Upload Assets ── -->
+    <section class="card {% if asset_manifest %}done{% endif %}">
+      <h2><span class="step">2</span> Upload Asset Folder</h2>
+      {% if asset_manifest %}
+        <p class="status ok">Assets matched ✓ — <a href="/data/asset_manifest.json" target="_blank">view mapping</a></p>
+      {% endif %}
+      <div class="upload-area" id="asset-drop">
+        <p>Drop entire asset folder here or <label for="asset-file" class="link">browse folder</label></p>
+        <input type="file" id="asset-file" webkitdirectory multiple hidden>
+      </div>
+      <p class="hint">Accepts PNG, GLB. Entire folder at once — no one-at-a-time.</p>
+    </section>
+
+    <!-- ── Step 3: Model Selection ── -->
+    <section class="card">
+      <h2><span class="step">3</span> Select Generation Models</h2>
+
+      <div class="model-group">
+        <h3>Stage 1 — Image Models (Product-in-Scene)</h3>
+        <div class="model-grid">
+          {% for m in config.stage1_image_models %}
+          <label class="model-toggle {% if m.primary %}primary{% endif %}">
+            <input type="checkbox" name="stage1" value="{{ m.id }}" {% if m.enabled %}checked{% endif %}>
+            <span>{{ m.label }}</span>
+            {% if m.primary %}<em>primary</em>{% endif %}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="model-group">
+        <h3>Stage 2 — Video Models (Animation)</h3>
+        <div class="model-grid">
+          {% for m in config.stage2_video_models %}
+          <label class="model-toggle">
+            <input type="checkbox" name="stage2" value="{{ m.id }}" {% if m.enabled %}checked{% endif %}>
+            <span>{{ m.label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button id="save-models-btn" class="btn secondary">Save Model Selection</button>
+    </section>
+
+    <!-- ── Step 4: Run ── -->
+    <section class="card">
+      <h2><span class="step">4</span> Run Pipeline</h2>
+
+      <div class="run-grid">
+        <div class="run-option">
+          <h3>Preview Run</h3>
+          <p>Generates backgrounds for one test asset using all selected models. Review results before committing to the full batch.</p>
+          <button id="preview-btn" class="btn primary" {% if not brief_uploaded %}disabled{% endif %}>
+            Preview ({{ config.preview_asset_id }} / {{ config.preview_aspect_ratio }})
+          </button>
+        </div>
+
+        <div class="run-option">
+          <h3>Full Batch</h3>
+          <p>Runs all 108+ variants with selected models. Builds output AEP and renders all MP4s.</p>
+          <button id="batch-btn" class="btn danger" {% if not copy_ready %}disabled{% endif %}>
+            Full Batch Run
+          </button>
+        </div>
+
+        <div class="run-option">
+          <h3>Re-render Only</h3>
+          <p>Rebuilds output AEP and re-renders from cached backgrounds. Use after editing the master AE template.</p>
+          <button id="rerender-btn" class="btn secondary" {% if not copy_ready %}disabled{% endif %}>
+            Re-render All
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Progress Log ── -->
+    <section class="card" id="progress-section" hidden>
+      <h2>Progress</h2>
+      <div id="progress-log"></div>
+    </section>
+
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

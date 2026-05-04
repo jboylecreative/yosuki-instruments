@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Results — Yosuki Pipeline</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Yosuki Motion Graphics Pipeline</h1>
+    <nav><a href="/">Setup</a> <a href="/results">Results</a></nav>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Rendered Outputs <span class="count">({{ renders|length }})</span></h2>
+
+      {% if renders %}
+      <div class="filter-bar">
+        <input type="text" id="filter-input" placeholder="Filter by locale, asset, aspect...">
+      </div>
+
+      <div class="results-grid" id="results-grid">
+        {% for r in renders %}
+        <div class="result-card" data-locale="{{ r.locale }}" data-asset="{{ r.asset }}" data-aspect="{{ r.aspect }}">
+          <div class="preview">
+            <video src="{{ r.path }}" muted loop preload="metadata"
+                   onmouseenter="this.play()" onmouseleave="this.pause(); this.currentTime=0;"></video>
+          </div>
+          <div class="meta">
+            <strong>{{ r.locale }}</strong> · {{ r.asset }} · {{ r.aspect }} · #{{ r.number }}
+            <p class="filename">{{ r.filename }}</p>
+          </div>
+          <div class="actions">
+            <button class="btn small secondary"
+                    onclick="regenerate('{{ r.locale }}', '{{ r.asset }}', '{{ r.aspect }}', '')">
+              Regenerate
+            </button>
+            <div class="model-select-wrap">
+              <select class="model-select" id="model-{{ loop.index }}">
+                {% for m in config.stage2_video_models %}
+                <option value="{{ m.id }}">{{ m.label }}</option>
+                {% endfor %}
+              </select>
+              <button class="btn small primary"
+                      onclick="regenerateWithModel('{{ r.locale }}', '{{ r.asset }}', '{{ r.aspect }}', 'model-{{ loop.index }}')">
+                Try Model
+              </button>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      {% else %}
+      <p class="empty">No renders yet. Run the pipeline from the <a href="/">Setup</a> page.</p>
+      {% endif %}
+    </section>
+
+    <!-- Progress overlay for per-card regeneration -->
+    <div id="regen-progress" class="overlay" hidden>
+      <div class="overlay-inner">
+        <h3>Regenerating...</h3>
+        <div id="regen-log"></div>
+        <button onclick="document.getElementById('regen-progress').hidden=true" class="btn secondary">Close</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>
+    document.getElementById('filter-input').addEventListener('input', function () {
+      const q = this.value.toLowerCase();
+      document.querySelectorAll('.result-card').forEach(card => {
+        const text = card.dataset.locale + card.dataset.asset + card.dataset.aspect;
+        card.style.display = text.includes(q) ? '' : 'none';
+      });
+    });
+
+    function regenerate(locale, asset, aspect, model) {
+      postRegen({ locale, asset, aspect, model });
+    }
+
+    function regenerateWithModel(locale, asset, aspect, selectId) {
+      const model = document.getElementById(selectId).value;
+      postRegen({ locale, asset, aspect, model });
+    }
+
+    function postRegen(params) {
+      const overlay = document.getElementById('regen-progress');
+      const log = document.getElementById('regen-log');
+      log.innerHTML = '';
+      overlay.hidden = false;
+
+      fetch('/run/placeholder/regenerate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      })
+      .then(r => r.json())
+      .then(({ run_id }) => {
+        const src = new EventSource(`/run/${run_id}/stream`);
+        src.onmessage = e => {
+          if (e.data === '__done__') { src.close(); return; }
+          const line = document.createElement('p');
+          line.textContent = e.data;
+          log.appendChild(line);
+          log.scrollTop = log.scrollHeight;
+        };
+      });
+    }
+  </script>
+</body>
+</html>

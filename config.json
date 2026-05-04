@@ -1,0 +1,23 @@
+{
+  "stage1_image_models": [
+    { "id": "nano-banana-pro", "fal_path": "fal-ai/nano-banana-pro",         "enabled": true,  "primary": true,  "label": "Nano Banana Pro" },
+    { "id": "flux-2-pro",      "fal_path": "fal-ai/flux-pro-v1.1-ultra",     "enabled": true,  "primary": false, "label": "Flux 2 Pro" },
+    { "id": "gpt-image-2",     "fal_path": "fal-ai/gpt-image-2",             "enabled": true,  "primary": false, "label": "GPT Image 2" },
+    { "id": "seedream-5",      "fal_path": "fal-ai/seedream-3",              "enabled": true,  "primary": false, "label": "Seedream 5" }
+  ],
+  "stage2_video_models": [
+    { "id": "kling",           "fal_path": "fal-ai/kling-video/v1.6/pro/image-to-video", "enabled": true,  "label": "Kling" },
+    { "id": "veo-3.1",         "fal_path": "fal-ai/veo3",                    "enabled": true,  "label": "Veo 3.1" },
+    { "id": "happyhorse",      "fal_path": "fal-ai/happy-video",             "enabled": true,  "label": "HappyHorse" },
+    { "id": "seedance-2",      "fal_path": "fal-ai/seedance-1-lite",         "enabled": true,  "label": "Seedance 2.0" },
+    { "id": "hailuo-2.3",      "fal_path": "fal-ai/minimax/video-01-live",   "enabled": true,  "label": "Hailuo 2.3" }
+  ],
+  "generations_per_model": 1,
+  "skip_existing": true,
+  "preview_asset_id": "sax1",
+  "preview_aspect_ratio": "16x9",
+  "aerender_path": "C:/Program Files/Adobe/Adobe After Effects 2025/aerender.exe",
+  "assets_folder": "./fde_asset_bundle",
+  "output_base": "./output",
+  "generated_base": "./generated"
+}
