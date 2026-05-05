@@ -32,23 +32,41 @@ DATA = ROOT / "data"
 GEN = ROOT / "generated" / "backgrounds"
 GEN.mkdir(parents=True, exist_ok=True)
 
-# Generation resolution per aspect ratio (2× target)
-RESOLUTIONS = {
-    "16x9":      {"width": 3840, "height": 2160, "aspect": "16:9"},
-    "Billboard": {"width": 3840, "height": 2160, "aspect": "16:9"},  # cropped in AE
-    "1x1":       {"width": 2160, "height": 2160, "aspect": "1:1"},
+# Legacy key aliases — maps old aspect ratio labels to new resolution-string IDs.
+# Allows brief JSONs generated before the sizes refactor to continue working.
+_LEGACY_SIZE_MAP = {
+    "16x9":      "1920x1080",
+    "1x1":       "1080x1080",
+    "Billboard": "970x250",
 }
 
-# Billboard prompt addition to ensure horizontal-safe composition
+# Billboard prompt suffix — applied to any size with billboard=true
 BILLBOARD_PROMPT_SUFFIX = (
-    " Wide cinematic horizontal composition. Subject centered left-to-right. "
-    "Generous empty space above and below the subject to allow cropping to a banner format."
+    " Ultra-wide cinematic composition. Keep the subject in the right third of the frame. "
+    "Left two-thirds should be a clean, darker, atmospheric area suitable for text overlay."
 )
 
 
-def _out_dir(product_id: str, model_id: str, variant_id: str, aspect: str) -> Path:
+def _build_size_lookup(cfg: dict) -> dict:
+    """Return {size_id: {gen_width, gen_height, billboard}} from config, with legacy fallback."""
+    sizes = cfg.get("sizes", [])
+    if sizes:
+        return {s["id"]: s for s in sizes}
+    # Hardcoded fallback if config has no sizes yet
+    return {
+        "1920x1080": {"gen_width": 3840, "gen_height": 2160, "billboard": False},
+        "1080x1080": {"gen_width": 2160, "gen_height": 2160, "billboard": False},
+        "970x250":   {"gen_width": 1940, "gen_height":  500, "billboard": True},
+    }
+
+
+def _normalize_size_id(size_id: str) -> str:
+    return _LEGACY_SIZE_MAP.get(size_id, size_id)
+
+
+def _out_dir(product_id: str, model_id: str, variant_id: str, size_id: str) -> Path:
     slug = f"{product_id}_{model_id}_{variant_id}"
-    return GEN / slug / aspect
+    return GEN / slug / size_id
 
 
 def _next_gen_index(directory: Path) -> int:
@@ -65,7 +83,8 @@ def _image_to_data_uri(path: Path) -> str:
 
 
 async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
-                           asset_png: Path, prompt: str, aspect: str,
+                           asset_png: Path, prompt: str, size_id: str,
+                           gen_width: int, gen_height: int, is_billboard: bool,
                            out_dir: Path, gen_index: int,
                            skip_existing: bool) -> Path | None:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -76,10 +95,9 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
         return out_path
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    res = RESOLUTIONS[aspect]
 
     full_prompt = prompt
-    if aspect == "Billboard":
+    if is_billboard:
         full_prompt += BILLBOARD_PROMPT_SUFFIX
 
     try:
@@ -89,13 +107,13 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
             if not client_id or not client_secret:
                 raise EnvironmentError("FIREFLY_CLIENT_ID / FIREFLY_CLIENT_SECRET not set")
 
-            print(f"    Stage1 [{model_id}] {aspect} — submitting to Adobe Firefly...")
+            print(f"    Stage1 [{model_id}] {size_id} — submitting to Adobe Firefly...")
             img_bytes = await firefly_generate_image(
                 client_id=client_id,
                 client_secret=client_secret,
                 prompt=full_prompt,
-                width=res["width"],
-                height=res["height"],
+                width=gen_width,
+                height=gen_height,
                 reference_image_path=asset_png,
             )
             if img_bytes is None:
@@ -103,7 +121,7 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
             out_path.write_bytes(img_bytes)
 
         else:
-            print(f"    Stage1 [{model_id}] {aspect} — submitting to fal.ai...")
+            print(f"    Stage1 [{model_id}] {size_id} — submitting to fal.ai...")
             import httpx
             image_url = _image_to_data_uri(asset_png)
 
@@ -113,8 +131,8 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
                 arguments={
                     "prompt": full_prompt,
                     "image_url": image_url,
-                    "width": res["width"],
-                    "height": res["height"],
+                    "width": gen_width,
+                    "height": gen_height,
                     "num_inference_steps": 28,
                     "guidance_scale": 3.5,
                 }
@@ -138,7 +156,7 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
 
 
 async def generate_stage2(fal_path: str, model_id: str, stage1_image: Path,
-                           prompt: str, aspect: str, out_dir: Path,
+                           prompt: str, size_id: str, out_dir: Path,
                            gen_index: int, skip_existing: bool) -> Path | None:
     out_path = out_dir / "stage2" / model_id / f"gen_{gen_index:03d}.mp4"
 
@@ -148,7 +166,7 @@ async def generate_stage2(fal_path: str, model_id: str, stage1_image: Path,
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"    Stage2 [{model_id}] {aspect} — submitting to fal.ai...")
+    print(f"    Stage2 [{model_id}] {size_id} — submitting to fal.ai...")
 
     try:
         image_url = _image_to_data_uri(stage1_image)
@@ -186,10 +204,17 @@ async def generate_stage2(fal_path: str, model_id: str, stage1_image: Path,
 
 
 async def process_variant(product_id: str, model_id: str, variant_id: str,
-                           asset_png: Path, aspect: str, copy: dict,
+                           asset_png: Path, size_id: str, copy: dict,
                            cfg: dict, gen_index: int,
                            filter_model: str | None = None):
-    out_dir = _out_dir(product_id, model_id, variant_id, aspect)
+    size_id = _normalize_size_id(size_id)
+    size_lookup = _build_size_lookup(cfg)
+    size = size_lookup.get(size_id, {})
+    gen_width = size.get("gen_width", 3840)
+    gen_height = size.get("gen_height", 2160)
+    is_billboard = size.get("billboard", False)
+
+    out_dir = _out_dir(product_id, model_id, variant_id, size_id)
     skip = cfg.get("skip_existing", True)
 
     stage1_models = [m for m in cfg["stage1_image_models"] if m["enabled"]]
@@ -209,7 +234,10 @@ async def process_variant(product_id: str, model_id: str, variant_id: str,
             provider=img_model.get("provider", "fal"),
             asset_png=asset_png,
             prompt=copy["background_prompt_stage1"],
-            aspect=aspect,
+            size_id=size_id,
+            gen_width=gen_width,
+            gen_height=gen_height,
+            is_billboard=is_billboard,
             out_dir=out_dir,
             gen_index=gen_index,
             skip_existing=skip,
@@ -220,7 +248,7 @@ async def process_variant(product_id: str, model_id: str, variant_id: str,
     # Choose the primary stage1 image for stage2 (or first available)
     stage1_for_video = stage1_results.get(primary_id) or next(iter(stage1_results.values()), None)
     if not stage1_for_video:
-        print(f"    Skipping Stage2 — no Stage1 image available for {product_id}/{model_id}/{variant_id}/{aspect}")
+        print(f"    Skipping Stage2 — no Stage1 image for {product_id}/{model_id}/{variant_id}/{size_id}")
         return
 
     # Stage 2: animate using primary stage1 image as starting frame
@@ -230,7 +258,7 @@ async def process_variant(product_id: str, model_id: str, variant_id: str,
             model_id=vid_model["id"],
             stage1_image=stage1_for_video,
             prompt=copy["background_prompt_stage2"],
-            aspect=aspect,
+            size_id=size_id,
             out_dir=out_dir,
             gen_index=gen_index,
             skip_existing=skip,
@@ -263,7 +291,7 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
     locales = brief["locales"]
 
     preview_asset = cfg.get("preview_asset_id", "sax1")
-    preview_aspect = cfg.get("preview_aspect_ratio", "16x9")
+    preview_size_id = _normalize_size_id(cfg.get("preview_size_id", cfg.get("preview_aspect_ratio", "1920x1080")))
 
     for product in brief["products"]:
         for model_entry in product["models"]:
@@ -278,15 +306,15 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
                 if filter_asset and Path(asset_png).stem != filter_asset:
                     continue
 
-                for aspect in model_entry["aspect_ratios"]:
-                    if filter_aspect and aspect != filter_aspect:
+                for size_id_raw in model_entry["aspect_ratios"]:
+                    size_id = _normalize_size_id(size_id_raw)
+
+                    if filter_aspect and size_id != _normalize_size_id(filter_aspect):
                         continue
 
-                    if preview and (Path(asset_png).stem != preview_asset or aspect != preview_aspect):
+                    if preview and (Path(asset_png).stem != preview_asset or size_id != preview_size_id):
                         continue
 
-                    # Use English copy for background generation (locale-agnostic backgrounds)
-                    # But allow locale override if locale filter is set
                     locale_for_prompt = filter_locale or "en"
                     copy_key = (product["id"], model_entry["id"], variant["id"], locale_for_prompt)
                     copy = copy_lookup.get(copy_key) or copy_lookup.get(
@@ -297,12 +325,12 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
                         print(f"  WARNING: No copy found for {copy_key}")
                         continue
 
-                    out_dir = _out_dir(product["id"], model_entry["id"], variant["id"], aspect)
+                    out_dir = _out_dir(product["id"], model_entry["id"], variant["id"], size_id)
                     gen_index = _next_gen_index(out_dir)
 
                     tasks.append((
                         product["id"], model_entry["id"], variant["id"],
-                        asset_png, aspect, copy, cfg, gen_index, filter_model
+                        asset_png, size_id, copy, cfg, gen_index, filter_model
                     ))
 
     if dry_run:
@@ -310,7 +338,7 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
         return
 
     if preview:
-        print(f"  Preview mode — {len(tasks)} combination(s) for asset '{preview_asset}' / {preview_aspect}")
+        print(f"  Preview mode — {len(tasks)} combination(s) for asset '{preview_asset}' / {preview_size_id}")
 
     async def run_all():
         for args in tasks:

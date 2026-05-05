@@ -109,6 +109,52 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ── Sizes: toggle enable/disable ─────────────────────────────────────────────
+  document.querySelectorAll('.size-toggle-cb').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      await fetch('/config/sizes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'toggle', id: cb.dataset.id, enabled: cb.checked }),
+      });
+      cb.closest('.model-toggle').classList.toggle('size-on', cb.checked);
+    });
+  });
+
+  // ── Sizes: remove ────────────────────────────────────────────────────────────
+  document.querySelectorAll('.remove-size-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm(`Remove size ${btn.dataset.id}?`)) return;
+      const r = await fetch('/config/sizes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove', id: btn.dataset.id }),
+      });
+      if ((await r.json()).status === 'ok') btn.closest('.size-row').remove();
+    });
+  });
+
+  // ── Sizes: add new ───────────────────────────────────────────────────────────
+  const addSizeBtn = document.getElementById('add-size-btn');
+  if (addSizeBtn) {
+    addSizeBtn.addEventListener('click', async () => {
+      const w = document.getElementById('new-size-w')?.value;
+      const h = document.getElementById('new-size-h')?.value;
+      const label = document.getElementById('new-size-label')?.value || `${w}×${h}`;
+      if (!w || !h) { alert('Enter width and height.'); return; }
+      const r = await fetch('/config/sizes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', width: w, height: h, label }),
+      });
+      const data = await r.json();
+      if (data.status === 'ok') {
+        // Reload page to show the new size row
+        window.location.reload();
+      }
+    });
+  }
+
   // ── Output destination panel toggle ─────────────────────────────────────────
   document.querySelectorAll('input[name="dest-type"]').forEach(radio => {
     radio.addEventListener('change', () => {

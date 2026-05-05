@@ -141,6 +141,37 @@
       </div>
 
       <button id="save-models-btn" class="btn secondary">Save Model Selection</button>
+
+      <div class="model-group" style="margin-top:1.5rem;">
+        <h3>Output Sizes</h3>
+        <div id="sizes-list" class="sizes-list">
+          {% for s in config.sizes %}
+          <div class="size-row" data-id="{{ s.id }}">
+            <label class="model-toggle {% if s.enabled %}size-on{% endif %}">
+              <input type="checkbox" class="size-toggle-cb" data-id="{{ s.id }}"
+                     {% if s.enabled %}checked{% endif %}>
+              <span>{{ s.label }}</span>
+              <em class="size-res">{{ s.width }}×{{ s.height }}</em>
+            </label>
+            {% if not s.billboard %}
+            <button class="btn small danger remove-size-btn" data-id="{{ s.id }}"
+                    title="Remove size">×</button>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+
+        <details class="add-size-wrap">
+          <summary class="link" style="font-size:.85rem;margin-top:.75rem;cursor:pointer;">+ Add custom size</summary>
+          <div class="add-size-form">
+            <input type="number" id="new-size-w" placeholder="Width px" min="100" max="7680">
+            <span style="color:var(--muted)">×</span>
+            <input type="number" id="new-size-h" placeholder="Height px" min="100" max="4320">
+            <input type="text" id="new-size-label" placeholder="Label (e.g. Stories / 9:16)" style="flex:2">
+            <button id="add-size-btn" class="btn secondary small">Add</button>
+          </div>
+        </details>
+      </div>
     </section>
 
     <!-- ── Step 4: Run ── -->

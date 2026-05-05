@@ -74,9 +74,11 @@ def _pdf_to_base64(path: Path) -> str:
     return base64.standard_b64encode(path.read_bytes()).decode()
 
 
-def parse_brief(model, brief_pdf: Path) -> dict:
+def parse_brief(model, brief_pdf: Path, enabled_size_ids: list[str]) -> dict:
     print(f"  Parsing brief: {brief_pdf.name}")
     pdf_data = _pdf_to_base64(brief_pdf)
+
+    size_list = json.dumps(enabled_size_ids)
 
     prompt = f"""You are a motion graphics pipeline assistant. Extract a complete structured representation
 of this campaign brief as JSON. Follow this schema exactly:
@@ -85,8 +87,8 @@ of this campaign brief as JSON. Follow this schema exactly:
 
 Rules:
 - locale ids must be lowercase 2-letter codes: en, jp, de, br
-- aspect_ratios per model must be a subset of: ["16x9", "Billboard", "1x1"]
-  (Saxophone: all 3; Pianos: ["16x9","Billboard"]; Guitars: all 3)
+- aspect_ratios per model must be a subset of the available size IDs: {size_list}
+  Assign all sizes to every model unless the brief explicitly restricts a product to fewer sizes.
 - For locale_creative_overrides, use an empty object {{}} unless the brief specifies locale-specific scene overrides
 - Extract all products, models, variants, and creative direction faithfully from the brief
 - Output ONLY valid JSON, no markdown fences"""
@@ -97,7 +99,6 @@ Rules:
     ])
 
     raw = response.text.strip()
-    # Strip markdown fences if present
     raw = re.sub(r"^```(?:json)?\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
     return json.loads(raw)
@@ -198,10 +199,14 @@ def run(cfg: dict, dry_run: bool = False):
         print("  [DRY RUN] Would parse brief and match assets")
         return
 
+    enabled_size_ids = [s["id"] for s in cfg.get("sizes", []) if s.get("enabled", True)]
+    if not enabled_size_ids:
+        enabled_size_ids = ["1920x1080", "1080x1080", "970x250"]
+
     gemini = _gemini_client()
 
     # Parse the brief
-    brief = parse_brief(gemini, brief_pdf)
+    brief = parse_brief(gemini, brief_pdf, enabled_size_ids)
     (DATA / "campaign_brief.json").write_text(json.dumps(brief, indent=2, ensure_ascii=False))
     print(f"  Saved campaign_brief.json — {len(brief['products'])} products, {len(brief['locales'])} locales")
 

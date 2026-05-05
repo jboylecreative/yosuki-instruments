@@ -35,23 +35,39 @@ def _run_output_dir(cfg: dict, run_timestamp: str) -> Path:
     return _resolve_output_base(cfg) / project_name / run_timestamp
 
 
-def _comp_name_for_aspect(aspect: str) -> str:
-    mapping = {
-        "16x9":      "YouTube_1920x1080",
-        "Billboard": "Billboard_970x250",
-        "1x1":       "Instagram_1080x1080",
-    }
-    return mapping.get(aspect, "YouTube_1920x1080")
+_LEGACY_SIZE_MAP = {
+    "16x9":      "1920x1080",
+    "1x1":       "1080x1080",
+    "Billboard": "970x250",
+}
+
+_DEFAULT_COMP_NAMES = {
+    "1920x1080": "YouTube_1920x1080",
+    "1080x1080": "Instagram_1080x1080",
+    "970x250":   "Billboard_970x250",
+}
+
+
+def _normalize_size_id(size_id: str) -> str:
+    return _LEGACY_SIZE_MAP.get(size_id, size_id)
+
+
+def _comp_name_for_size(size_id: str, cfg: dict) -> str:
+    size_id = _normalize_size_id(size_id)
+    for s in cfg.get("sizes", []):
+        if s["id"] == size_id:
+            return s.get("comp_name", f"Comp_{size_id}")
+    return _DEFAULT_COMP_NAMES.get(size_id, f"Comp_{size_id}")
 
 
 def _find_best_bg_video(product_id: str, model_id: str, variant_id: str,
-                         aspect: str, cfg: dict) -> str | None:
+                         size_id: str, cfg: dict) -> str | None:
+    size_id = _normalize_size_id(size_id)
     slug = f"{product_id}_{model_id}_{variant_id}"
-    base = GEN / slug / aspect / "stage2"
+    base = GEN / slug / size_id / "stage2"
     if not base.exists():
         return None
 
-    # Prefer enabled models in order
     for vid_model in cfg["stage2_video_models"]:
         if not vid_model["enabled"]:
             continue
@@ -77,13 +93,14 @@ def build_jobs(brief: dict, copy_manifest: dict, cfg: dict, run_timestamp: str) 
     for product in brief["products"]:
         for model_entry in product["models"]:
             for variant in model_entry["variants"]:
-                for aspect in model_entry["aspect_ratios"]:
+                for size_id_raw in model_entry["aspect_ratios"]:
+                    size_id = _normalize_size_id(size_id_raw)
                     bg_video = _find_best_bg_video(
-                        product["id"], model_entry["id"], variant["id"], aspect, cfg
+                        product["id"], model_entry["id"], variant["id"], size_id, cfg
                     )
                     if not bg_video:
                         print(f"  WARNING: No background video for "
-                              f"{product['id']}/{model_entry['id']}/{variant['id']}/{aspect} — skipping")
+                              f"{product['id']}/{model_entry['id']}/{variant['id']}/{size_id} — skipping")
                         continue
 
                     for locale in brief["locales"]:
@@ -93,8 +110,6 @@ def build_jobs(brief: dict, copy_manifest: dict, cfg: dict, run_timestamp: str) 
                             print(f"  WARNING: No copy for {copy_key}")
                             continue
 
-                        asset_stem = Path(bg_video).parents[2].name.split("_")[-1]
-                        # Recover asset stem from manifest
                         asset_stem = f"{model_entry['id']}"
                         if variant.get("color"):
                             color_suffix = "-a" if "black" in (variant["color"] or "").lower() else "-b"
@@ -102,20 +117,19 @@ def build_jobs(brief: dict, copy_manifest: dict, cfg: dict, run_timestamp: str) 
 
                         locale_code = locale["id"].upper()
                         gen_num = int(Path(bg_video).stem.split("_")[1])
-                        output_filename = f"{locale_code}_{asset_stem}_{aspect}_{gen_num:03d}.mp4"
+                        output_filename = f"{locale_code}_{asset_stem}_{size_id}_{gen_num:03d}.mp4"
                         output_path = str(output_dir / output_filename)
-
                         comp_name = output_filename.replace(".mp4", "")
 
                         jobs.append({
                             "comp_name": comp_name,
-                            "composition_name": _comp_name_for_aspect(aspect),
+                            "composition_name": _comp_name_for_size(size_id, cfg),
                             "locale": locale["id"],
                             "product_id": product["id"],
                             "model_id": model_entry["id"],
                             "variant_id": variant["id"],
                             "asset_stem": asset_stem,
-                            "aspect": aspect,
+                            "size_id": size_id,
                             "bg_video_path": bg_video,
                             "logo_path": str(ROOT / "fde_asset_bundle" / "logo.png"),
                             "tagline": copy["tagline"],

@@ -1,5 +1,40 @@
 {
   "project_name": "Yosuki Find Your Sound 2026",
+  "sizes": [
+    {
+      "id": "1920x1080",
+      "label": "YouTube / 16:9",
+      "comp_name": "YouTube_1920x1080",
+      "width": 1920,
+      "height": 1080,
+      "gen_width": 3840,
+      "gen_height": 2160,
+      "billboard": false,
+      "enabled": true
+    },
+    {
+      "id": "1080x1080",
+      "label": "Instagram / 1:1",
+      "comp_name": "Instagram_1080x1080",
+      "width": 1080,
+      "height": 1080,
+      "gen_width": 2160,
+      "gen_height": 2160,
+      "billboard": false,
+      "enabled": true
+    },
+    {
+      "id": "970x250",
+      "label": "Billboard",
+      "comp_name": "Billboard_970x250",
+      "width": 970,
+      "height": 250,
+      "gen_width": 1940,
+      "gen_height": 500,
+      "billboard": true,
+      "enabled": true
+    }
+  ],
   "stage1_image_models": [
     { "id": "nano-banana-pro", "provider": "fal",      "fal_path": "fal-ai/nano-banana-pro",           "enabled": true,  "primary": true,  "label": "Nano Banana Pro" },
     { "id": "flux-2-pro",      "provider": "fal",      "fal_path": "fal-ai/flux-pro-v1.1-ultra",       "enabled": true,  "primary": false, "label": "Flux 2 Pro" },
@@ -17,7 +52,7 @@
   "generations_per_model": 1,
   "skip_existing": true,
   "preview_asset_id": "sax1",
-  "preview_aspect_ratio": "16x9",
+  "preview_size_id": "1920x1080",
   "aerender_path": "C:/Program Files/Adobe/Adobe After Effects 2025/aerender.exe",
   "assets_folder": "./fde_asset_bundle",
   "output_destination": {

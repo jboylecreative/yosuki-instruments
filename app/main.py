@@ -125,6 +125,52 @@ async def update_model_config(request: Request):
     return JSONResponse({"status": "ok"})
 
 
+@app.get("/config/sizes")
+async def get_sizes():
+    cfg = load_config()
+    return JSONResponse({"sizes": cfg.get("sizes", [])})
+
+
+@app.post("/config/sizes")
+async def update_sizes(request: Request):
+    body = await request.json()
+    cfg = load_config()
+    action = body.get("action")
+
+    if action == "toggle":
+        size_id = body["id"]
+        for s in cfg["sizes"]:
+            if s["id"] == size_id:
+                s["enabled"] = body["enabled"]
+                break
+
+    elif action == "add":
+        w = int(body["width"])
+        h = int(body["height"])
+        label = body.get("label", f"{w}×{h}")
+        new_size = {
+            "id": f"{w}x{h}",
+            "label": label,
+            "comp_name": f"Comp_{w}x{h}",
+            "width": w,
+            "height": h,
+            "gen_width": w * 2,
+            "gen_height": h * 2,
+            "billboard": False,
+            "enabled": True,
+        }
+        existing_ids = {s["id"] for s in cfg["sizes"]}
+        if new_size["id"] not in existing_ids:
+            cfg["sizes"].append(new_size)
+
+    elif action == "remove":
+        size_id = body["id"]
+        cfg["sizes"] = [s for s in cfg["sizes"] if s["id"] != size_id]
+
+    save_config(cfg)
+    return JSONResponse({"status": "ok", "sizes": cfg["sizes"]})
+
+
 @app.post("/config/project")
 async def update_project_config(request: Request):
     body = await request.json()
@@ -206,12 +252,14 @@ async def results(request: Request):
             except ValueError:
                 continue
             parts = mp4.stem.split("_")
+            # filename format: {LOCALE}_{asset}_{WxH}_{NNN}
+            # size_id contains 'x' so split carefully from the right
             renders.append({
                 "filename": mp4.name,
                 "path": f"/output/{rel.as_posix()}",
                 "locale": parts[0] if len(parts) > 0 else "",
                 "asset": parts[1] if len(parts) > 1 else "",
-                "aspect": parts[2] if len(parts) > 2 else "",
+                "size": parts[2] if len(parts) > 2 else "",
                 "number": parts[3] if len(parts) > 3 else "",
             })
     return templates.TemplateResponse("results.html", {

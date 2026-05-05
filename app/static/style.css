@@ -77,6 +77,18 @@ main { max-width: 960px; margin: 2rem auto; padding: 0 1.5rem; display: flex; fl
 .count { font-size: .8rem; color: var(--muted); font-weight: 400; }
 .empty { color: var(--muted); }
 
+/* Sizes management */
+.sizes-list { display: flex; flex-direction: column; gap: .4rem; }
+.size-row { display: flex; align-items: center; gap: .5rem; }
+.size-row .remove-size-btn { padding: .2rem .55rem; line-height: 1; }
+.size-res { font-size: .7rem; color: var(--muted); font-style: normal; margin-left: .25rem; }
+.add-size-form { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-top: .6rem; }
+.add-size-form input[type="number"],
+.add-size-form input[type="text"] { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: .35rem .6rem; font-size: .85rem; width: 110px; }
+.add-size-form input[type="text"] { width: auto; flex: 2; min-width: 160px; }
+.add-size-wrap summary { list-style: none; }
+.add-size-wrap summary::-webkit-details-marker { display: none; }
+
 /* Project settings */
 .project-settings { border-color: var(--accent2); }
 .settings-row { margin-bottom: 1rem; }
