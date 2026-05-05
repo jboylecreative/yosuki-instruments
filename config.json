@@ -10,7 +10,8 @@
       "gen_width": 3840,
       "gen_height": 2160,
       "billboard": false,
-      "enabled": true
+      "enabled": true,
+      "composition_hint": "Place the instrument prominently in the right third of the frame. The left two-thirds should be an atmospheric, slightly darker area — clean enough for white text overlay to remain legible."
     },
     {
       "id": "1080x1080",
@@ -21,7 +22,8 @@
       "gen_width": 2160,
       "gen_height": 2160,
       "billboard": false,
-      "enabled": true
+      "enabled": true,
+      "composition_hint": "Place the instrument in the lower-right area of the frame. The upper-left quadrant should be clean, atmospheric, and slightly darker — suitable for white text overlay."
     },
     {
       "id": "970x250",
@@ -32,7 +34,8 @@
       "gen_width": 1940,
       "gen_height": 500,
       "billboard": true,
-      "enabled": true
+      "enabled": true,
+      "composition_hint": ""
     }
   ],
   "stage1_image_models": [

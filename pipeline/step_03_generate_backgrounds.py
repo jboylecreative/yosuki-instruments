@@ -40,11 +40,8 @@ _LEGACY_SIZE_MAP = {
     "Billboard": "970x250",
 }
 
-# Billboard prompt suffix — applied to any size with billboard=true
-BILLBOARD_PROMPT_SUFFIX = (
-    " Ultra-wide cinematic composition. Keep the subject in the right third of the frame. "
-    "Left two-thirds should be a clean, darker, atmospheric area suitable for text overlay."
-)
+# No billboard suffix needed here — billboard prompt is supplied by step_02's
+# background_prompt_billboard key and routed in process_variant().
 
 
 def _build_size_lookup(cfg: dict) -> dict:
@@ -62,6 +59,33 @@ def _build_size_lookup(cfg: dict) -> dict:
 
 def _normalize_size_id(size_id: str) -> str:
     return _LEGACY_SIZE_MAP.get(size_id, size_id)
+
+
+def _find_hero_stage1_image(product_id: str, model_id: str, variant_id: str,
+                              cfg: dict) -> Path | None:
+    """Return the best available stage1 image for the hero (1920x1080) size.
+
+    Used as the reference image when generating the billboard atmospheric background.
+    Prefers the primary image model's output; falls back to any available result.
+    """
+    hero_size = "1920x1080"
+    slug = f"{product_id}_{model_id}_{variant_id}"
+    base = GEN / slug / hero_size / "stage1"
+    if not base.exists():
+        return None
+
+    primary_id = next(
+        (m["id"] for m in cfg.get("stage1_image_models", []) if m.get("primary")), None
+    )
+    if primary_id:
+        primary_dir = base / primary_id
+        images = sorted(primary_dir.glob("gen_*.png")) if primary_dir.exists() else []
+        if images:
+            return images[-1]
+
+    for img in sorted(base.rglob("gen_*.png")):
+        return img
+    return None
 
 
 def _out_dir(product_id: str, model_id: str, variant_id: str, size_id: str) -> Path:
@@ -96,10 +120,6 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    full_prompt = prompt
-    if is_billboard:
-        full_prompt += BILLBOARD_PROMPT_SUFFIX
-
     try:
         if provider == "firefly":
             client_id = os.environ.get("FIREFLY_CLIENT_ID", "")
@@ -111,7 +131,7 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
             img_bytes = await firefly_generate_image(
                 client_id=client_id,
                 client_secret=client_secret,
-                prompt=full_prompt,
+                prompt=prompt,
                 width=gen_width,
                 height=gen_height,
                 reference_image_path=asset_png,
@@ -129,7 +149,7 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
                 fal_client.run,
                 fal_path,
                 arguments={
-                    "prompt": full_prompt,
+                    "prompt": prompt,
                     "image_url": image_url,
                     "width": gen_width,
                     "height": gen_height,
@@ -223,6 +243,26 @@ async def process_variant(product_id: str, model_id: str, variant_id: str,
     if filter_model:
         stage2_models = [m for m in stage2_models if m["id"] == filter_model]
 
+    # Determine stage1 prompt and reference image
+    if is_billboard:
+        # Billboard: atmospheric texture generated from the hero (1920x1080) stage1 image
+        # as a style reference rather than the raw product PNG.
+        stage1_prompt = copy.get(
+            "background_prompt_billboard",
+            "Abstract atmospheric texture. Cinematic bokeh, warm depth, painterly. No objects or people.",
+        )
+        hero_img = _find_hero_stage1_image(product_id, model_id, variant_id, cfg)
+        stage1_reference = hero_img if hero_img else asset_png
+        if not hero_img:
+            print(f"    [billboard] No hero image found — using product PNG as fallback reference")
+    else:
+        stage1_prompt = copy["background_prompt_stage1"]
+        # Append per-size composition hint so the subject lands in the right area of frame
+        composition_hint = size.get("composition_hint", "")
+        if composition_hint:
+            stage1_prompt = f"{stage1_prompt} {composition_hint}"
+        stage1_reference = asset_png
+
     # Stage 1: run all enabled image models
     stage1_results: dict[str, Path] = {}
     primary_id = next((m["id"] for m in stage1_models if m.get("primary")), None)
@@ -232,8 +272,8 @@ async def process_variant(product_id: str, model_id: str, variant_id: str,
             fal_path=img_model.get("fal_path"),
             model_id=img_model["id"],
             provider=img_model.get("provider", "fal"),
-            asset_png=asset_png,
-            prompt=copy["background_prompt_stage1"],
+            asset_png=stage1_reference,
+            prompt=stage1_prompt,
             size_id=size_id,
             gen_width=gen_width,
             gen_height=gen_height,
@@ -336,6 +376,11 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
     if dry_run:
         print(f"  [DRY RUN] Would generate backgrounds for {len(tasks)} variant/aspect combinations")
         return
+
+    # Sort so billboard sizes run after non-billboard — billboard stage1 references the
+    # hero (1920x1080) stage1 result, which must exist before billboard is processed.
+    size_lookup = _build_size_lookup(cfg)
+    tasks.sort(key=lambda t: 1 if size_lookup.get(t[4], {}).get("billboard", False) else 0)
 
     if preview:
         print(f"  Preview mode — {len(tasks)} combination(s) for asset '{preview_asset}' / {preview_size_id}")

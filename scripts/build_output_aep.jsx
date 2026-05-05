@@ -45,6 +45,23 @@ function findLayer(comp, name) {
     return null;
 }
 
+// ── Helper: apply or refresh drop shadow on a text layer ─────────────────
+function ensureDropShadow(layer) {
+    try {
+        var ls = layer.property("ADBE Layer Styles");
+        var ds = ls.property("ADBE Drop Shadow");
+        ds.enabled = true;
+        ds.property("ADBE DS Color").setValue([0, 0, 0, 1]);
+        ds.property("ADBE DS Opacity").setValue(65);
+        ds.property("ADBE DS Angle").setValue(135);
+        ds.property("ADBE DS Distance").setValue(3);
+        ds.property("ADBE DS Softness").setValue(12);
+        ds.property("ADBE DS Spread").setValue(0);
+    } catch (e) {
+        $.writeln("  Warning: drop shadow on " + layer.name + ": " + e.message);
+    }
+}
+
 // ── Helper: import a footage file ─────────────────────────────────────────
 function importFile(filePath) {
     var f = new File(filePath);
@@ -118,20 +135,23 @@ for (var j = 0; j < jobs.length; j++) {
         logoLayer.replaceSource(logoItem, false);
     }
 
-    // Set text layers
+    // Set text layers and ensure drop shadow on each
     var taglineLayer = findLayer(newComp, "TEXT_TAGLINE");
     if (taglineLayer) {
         taglineLayer.property("Source Text").setValue(job.tagline);
+        ensureDropShadow(taglineLayer);
     }
 
     var productNameLayer = findLayer(newComp, "TEXT_PRODUCT_NAME");
     if (productNameLayer) {
         productNameLayer.property("Source Text").setValue(job.product_name);
+        ensureDropShadow(productNameLayer);
     }
 
     var ctaLayer = findLayer(newComp, "TEXT_CTA");
     if (ctaLayer) {
         ctaLayer.property("Source Text").setValue(job.cta);
+        ensureDropShadow(ctaLayer);
     }
 }
 

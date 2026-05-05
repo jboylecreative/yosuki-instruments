@@ -84,7 +84,8 @@ Generate the following as JSON with exactly these keys:
   "cta": "...",
   "product_name": "...",
   "background_prompt_stage1": "...",
-  "background_prompt_stage2": "..."
+  "background_prompt_stage2": "...",
+  "background_prompt_billboard": "..."
 }}
 
 Rules:
@@ -93,6 +94,7 @@ Rules:
 - product_name: Display name for this product in {locale_lang}. ≤50 characters.
 - background_prompt_stage1: In English. A detailed image generation prompt for placing the {model_name} instrument into this scene: "{effective_scene}". Include: instrument positioned naturally in the scene, lighting, atmosphere, and mood. Style: cinematic product photography. Do NOT mention text overlays or UI elements.
 - background_prompt_stage2: In English. A short video motion prompt for animating the stage1 image. Emphasize SUBTLE motion only: slow push-in, gentle drift, barely perceptible camera movement. Duration: 6-8 seconds. Scene: {effective_scene}.
+- background_prompt_billboard: In English. An image generation prompt for creating an ABSTRACT ATMOSPHERIC TEXTURE inspired by this scene: "{effective_scene}". This will be generated using the 16:9 master image as a style reference. Focus ONLY on color, light, mood, bokeh, and texture — absolutely NO instruments, NO people, NO objects. Keep it painterly and abstract. Examples: "warm amber bokeh lights, jazz club atmospheric glow, soft golden depth, painterly grain texture" or "misty forest bokeh, cool blue-green depth, atmospheric haze, abstract color wash".
 
 Output ONLY valid JSON, no markdown fences."""
 
@@ -177,6 +179,7 @@ def run(cfg: dict, dry_run: bool = False):
                             "product_name": model_entry["name"],
                             "background_prompt_stage1": product["creative_direction"]["scene"],
                             "background_prompt_stage2": "Slow subtle push-in camera movement, 6 seconds.",
+                            "background_prompt_billboard": f"Abstract atmospheric texture. {product['creative_direction']['vibe']}. Warm cinematic bokeh, painterly depth, no objects or people.",
                         }
 
                 manifest["variants"].append({
