@@ -17,8 +17,20 @@ sys.path.insert(0, str(ROOT))
 
 app = FastAPI(title="Yosuki Motion Graphics Pipeline")
 app.mount("/static", StaticFiles(directory=ROOT / "app" / "static"), name="static")
-app.mount("/output", StaticFiles(directory=ROOT / "output"), name="output")
 app.mount("/generated", StaticFiles(directory=ROOT / "generated"), name="generated")
+
+
+def _mount_output_dir():
+    cfg = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
+    dest = cfg.get("output_destination", {})
+    local_path = dest.get("local_path", "./output")
+    p = Path(local_path) if Path(local_path).is_absolute() else (ROOT / local_path).resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+_output_dir = _mount_output_dir()
+app.mount("/output", StaticFiles(directory=_output_dir), name="output")
 templates = Jinja2Templates(directory=ROOT / "app" / "templates")
 
 CONFIG_PATH = ROOT / "config.json"
@@ -113,6 +125,24 @@ async def update_model_config(request: Request):
     return JSONResponse({"status": "ok"})
 
 
+@app.post("/config/project")
+async def update_project_config(request: Request):
+    body = await request.json()
+    cfg = load_config()
+    if "project_name" in body:
+        cfg["project_name"] = body["project_name"]
+    if "output_destination" in body:
+        dest = body["output_destination"]
+        cfg["output_destination"] = {
+            "type": dest.get("type", "local"),
+            "local_path": dest.get("local_path", "./output"),
+            "gcs_bucket": dest.get("gcs_bucket", ""),
+            "gcs_prefix": dest.get("gcs_prefix", "renders"),
+        }
+    save_config(cfg)
+    return JSONResponse({"status": "ok"})
+
+
 @app.post("/run/parse")
 async def run_parse():
     run_id = str(uuid.uuid4())[:8]
@@ -160,23 +190,34 @@ async def regenerate_variant(run_id: str, request: Request):
 
 @app.get("/results", response_class=HTMLResponse)
 async def results(request: Request):
-    output_dir = ROOT / "output"
+    cfg = load_config()
+    dest = cfg.get("output_destination", {})
+    local_path = dest.get("local_path", "./output")
+    output_base = Path(local_path) if Path(local_path).is_absolute() else (ROOT / local_path).resolve()
+
     renders = []
-    for mp4 in output_dir.rglob("*.mp4"):
-        rel = mp4.relative_to(output_dir)
-        parts = mp4.stem.split("_")
-        renders.append({
-            "filename": mp4.name,
-            "path": f"/output/{rel.as_posix()}",
-            "locale": parts[0] if len(parts) > 0 else "",
-            "asset": parts[1] if len(parts) > 1 else "",
-            "aspect": parts[2] if len(parts) > 2 else "",
-            "number": parts[3] if len(parts) > 3 else "",
-        })
+    if output_base.exists():
+        for mp4 in output_base.rglob("*.mp4"):
+            # Only include files from renders/ subdirectories
+            if "renders" not in mp4.parts:
+                continue
+            try:
+                rel = mp4.relative_to(output_base)
+            except ValueError:
+                continue
+            parts = mp4.stem.split("_")
+            renders.append({
+                "filename": mp4.name,
+                "path": f"/output/{rel.as_posix()}",
+                "locale": parts[0] if len(parts) > 0 else "",
+                "asset": parts[1] if len(parts) > 1 else "",
+                "aspect": parts[2] if len(parts) > 2 else "",
+                "number": parts[3] if len(parts) > 3 else "",
+            })
     return templates.TemplateResponse("results.html", {
         "request": request,
         "renders": renders,
-        "config": load_config(),
+        "config": cfg,
     })
 
 

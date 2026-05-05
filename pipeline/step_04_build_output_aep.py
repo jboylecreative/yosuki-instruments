@@ -4,12 +4,12 @@ Step 4: Build the output AEP via ExtendScript.
 Reads campaign_brief.json, copy_manifest.json, and the generated backgrounds.
 Writes data/aep_build_config.json (read by build_output_aep.jsx).
 Runs aerender -script to execute the ExtendScript.
-Result: output/{run_id}/yosuki_output_{run_id}.aep with one comp per variant.
+Result: {output_base}/{project_name}/{YYYY-MM-DD}/{HH-MM-SS}/output.aep
 """
 import json
 import os
 import subprocess
-import uuid
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,8 +20,19 @@ load_dotenv(ROOT / ".env")
 DATA = ROOT / "data"
 GEN = ROOT / "generated" / "backgrounds"
 TEMPLATES = ROOT / "templates"
-OUTPUT_BASE = ROOT / "output"
 SCRIPTS = ROOT / "scripts"
+
+
+def _resolve_output_base(cfg: dict) -> Path:
+    dest = cfg.get("output_destination", {})
+    local_path = dest.get("local_path", "./output")
+    p = Path(local_path)
+    return p if p.is_absolute() else (ROOT / p).resolve()
+
+
+def _run_output_dir(cfg: dict, run_timestamp: str) -> Path:
+    project_name = cfg.get("project_name", "output")
+    return _resolve_output_base(cfg) / project_name / run_timestamp
 
 
 def _comp_name_for_aspect(aspect: str) -> str:
@@ -52,8 +63,8 @@ def _find_best_bg_video(product_id: str, model_id: str, variant_id: str,
     return None
 
 
-def build_jobs(brief: dict, copy_manifest: dict, cfg: dict, run_id: str) -> list[dict]:
-    output_dir = OUTPUT_BASE / run_id / "renders"
+def build_jobs(brief: dict, copy_manifest: dict, cfg: dict, run_timestamp: str) -> list[dict]:
+    output_dir = _run_output_dir(cfg, run_timestamp) / "renders"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     copy_lookup: dict[tuple, dict] = {}
@@ -137,14 +148,16 @@ def run(cfg: dict, dry_run: bool = False):
     copy_manifest = json.loads(copy_path.read_text())
 
     run_id_file = DATA / "current_run_id.txt"
-    run_id = run_id_file.read_text().strip() if run_id_file.exists() else str(uuid.uuid4())[:8]
-    run_id_file.write_text(run_id)
+    run_timestamp = datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
+    run_id_file.write_text(run_timestamp)
 
-    jobs = build_jobs(brief, copy_manifest, cfg, run_id)
+    run_dir = _run_output_dir(cfg, run_timestamp)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    output_aep = run_dir / "output.aep"
+
+    jobs = build_jobs(brief, copy_manifest, cfg, run_timestamp)
     print(f"  Built {len(jobs)} render jobs")
-
-    output_aep = OUTPUT_BASE / run_id / f"yosuki_output_{run_id}.aep"
-    output_aep.parent.mkdir(parents=True, exist_ok=True)
+    print(f"  Output dir: {run_dir}")
 
     aep_config = {
         "master_aep_path": str(master_aep),
@@ -155,7 +168,6 @@ def run(cfg: dict, dry_run: bool = False):
     config_path = DATA / "aep_build_config.json"
     config_path.write_text(json.dumps(aep_config, indent=2))
 
-    # Also write individual nexrender job JSONs
     jobs_dir = DATA / "render_jobs"
     jobs_dir.mkdir(exist_ok=True)
     for job in jobs:

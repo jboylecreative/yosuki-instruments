@@ -23,6 +23,7 @@ from pathlib import Path
 
 import fal_client
 from dotenv import load_dotenv
+from pipeline.clients.firefly import generate_image as firefly_generate_image
 
 ROOT = Path(__file__).parent.parent
 load_dotenv(ROOT / ".env")
@@ -63,9 +64,10 @@ def _image_to_data_uri(path: Path) -> str:
     return f"data:image/png;base64,{data}"
 
 
-async def generate_stage1(fal_path: str, model_id: str, asset_png: Path,
-                           prompt: str, aspect: str, out_dir: Path,
-                           gen_index: int, skip_existing: bool) -> Path | None:
+async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
+                           asset_png: Path, prompt: str, aspect: str,
+                           out_dir: Path, gen_index: int,
+                           skip_existing: bool) -> Path | None:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "stage1" / model_id / f"gen_{gen_index:03d}.png"
 
@@ -80,34 +82,52 @@ async def generate_stage1(fal_path: str, model_id: str, asset_png: Path,
     if aspect == "Billboard":
         full_prompt += BILLBOARD_PROMPT_SUFFIX
 
-    print(f"    Stage1 [{model_id}] {aspect} — submitting to fal.ai...")
-
     try:
-        image_url = _image_to_data_uri(asset_png)
+        if provider == "firefly":
+            client_id = os.environ.get("FIREFLY_CLIENT_ID", "")
+            client_secret = os.environ.get("FIREFLY_CLIENT_SECRET", "")
+            if not client_id or not client_secret:
+                raise EnvironmentError("FIREFLY_CLIENT_ID / FIREFLY_CLIENT_SECRET not set")
 
-        result = await asyncio.to_thread(
-            fal_client.run,
-            fal_path,
-            arguments={
-                "prompt": full_prompt,
-                "image_url": image_url,
-                "width": res["width"],
-                "height": res["height"],
-                "num_inference_steps": 28,
-                "guidance_scale": 3.5,
-            }
-        )
+            print(f"    Stage1 [{model_id}] {aspect} — submitting to Adobe Firefly...")
+            img_bytes = await firefly_generate_image(
+                client_id=client_id,
+                client_secret=client_secret,
+                prompt=full_prompt,
+                width=res["width"],
+                height=res["height"],
+                reference_image_path=asset_png,
+            )
+            if img_bytes is None:
+                raise RuntimeError("Firefly returned no image bytes")
+            out_path.write_bytes(img_bytes)
 
-        # Download the result image
-        import httpx
-        img_url = result["images"][0]["url"] if "images" in result else result.get("image", {}).get("url")
-        if not img_url:
-            raise ValueError(f"No image URL in response: {list(result.keys())}")
+        else:
+            print(f"    Stage1 [{model_id}] {aspect} — submitting to fal.ai...")
+            import httpx
+            image_url = _image_to_data_uri(asset_png)
 
-        async with httpx.AsyncClient() as client:
-            r = await client.get(img_url, timeout=60)
-            r.raise_for_status()
-            out_path.write_bytes(r.content)
+            result = await asyncio.to_thread(
+                fal_client.run,
+                fal_path,
+                arguments={
+                    "prompt": full_prompt,
+                    "image_url": image_url,
+                    "width": res["width"],
+                    "height": res["height"],
+                    "num_inference_steps": 28,
+                    "guidance_scale": 3.5,
+                }
+            )
+
+            img_url = result["images"][0]["url"] if "images" in result else result.get("image", {}).get("url")
+            if not img_url:
+                raise ValueError(f"No image URL in response: {list(result.keys())}")
+
+            async with httpx.AsyncClient() as client:
+                r = await client.get(img_url, timeout=60)
+                r.raise_for_status()
+                out_path.write_bytes(r.content)
 
         print(f"    Stage1 [{model_id}] saved → {out_path.name}")
         return out_path
@@ -184,8 +204,9 @@ async def process_variant(product_id: str, model_id: str, variant_id: str,
 
     for img_model in stage1_models:
         result = await generate_stage1(
-            fal_path=img_model["fal_path"],
+            fal_path=img_model.get("fal_path"),
             model_id=img_model["id"],
+            provider=img_model.get("provider", "fal"),
             asset_png=asset_png,
             prompt=copy["background_prompt_stage1"],
             aspect=aspect,

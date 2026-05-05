@@ -108,4 +108,39 @@ document.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => { saveModels.textContent = 'Save Model Selection'; }, 2000);
     });
   }
+
+  // ── Output destination panel toggle ─────────────────────────────────────────
+  document.querySelectorAll('input[name="dest-type"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      document.querySelectorAll('.dest-panel').forEach(p => p.hidden = true);
+      const panel = document.getElementById(`dest-${radio.value}`);
+      if (panel) panel.hidden = false;
+    });
+  });
+
+  // ── Save project settings ────────────────────────────────────────────────────
+  const saveProject = document.getElementById('save-project-btn');
+  if (saveProject) {
+    saveProject.addEventListener('click', async () => {
+      const destType = document.querySelector('input[name="dest-type"]:checked')?.value || 'local';
+      const payload = {
+        project_name: document.getElementById('project-name')?.value || '',
+        output_destination: {
+          type: destType,
+          local_path: document.getElementById('local-path')?.value || './output',
+          gcs_bucket: document.getElementById('gcs-bucket')?.value || '',
+          gcs_prefix: document.getElementById('gcs-prefix')?.value || 'renders',
+        },
+      };
+      const r = await fetch('/config/project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if ((await r.json()).status === 'ok') {
+        saveProject.textContent = 'Saved ✓';
+        setTimeout(() => { saveProject.textContent = 'Save Project Settings'; }, 2000);
+      }
+    });
+  }
 });

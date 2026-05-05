@@ -40,6 +40,13 @@ def build_nexrender_job(job: dict, output_aep: str) -> dict:
     }
 
 
+def _resolve_output_base(cfg: dict) -> Path:
+    dest = cfg.get("output_destination", {})
+    local_path = dest.get("local_path", "./output")
+    p = Path(local_path)
+    return p if p.is_absolute() else (ROOT / p).resolve()
+
+
 def run(cfg: dict, dry_run: bool = False):
     jobs_dir = DATA / "render_jobs"
     if not jobs_dir.exists() or not list(jobs_dir.glob("*.json")):
@@ -48,9 +55,11 @@ def run(cfg: dict, dry_run: bool = False):
     run_id_file = DATA / "current_run_id.txt"
     if not run_id_file.exists():
         raise FileNotFoundError("current_run_id.txt not found — run Step 4 first")
-    run_id = run_id_file.read_text().strip()
+    run_timestamp = run_id_file.read_text().strip()
 
-    output_aep = ROOT / "output" / run_id / f"yosuki_output_{run_id}.aep"
+    project_name = cfg.get("project_name", "output")
+    run_dir = _resolve_output_base(cfg) / project_name / run_timestamp
+    output_aep = run_dir / "output.aep"
     if not output_aep.exists():
         raise FileNotFoundError(f"Output AEP not found: {output_aep} — run Step 4 first")
 

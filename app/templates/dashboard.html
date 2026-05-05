@@ -14,6 +14,75 @@
 
   <main>
 
+    <!-- ── Project Settings ── -->
+    <section class="card project-settings">
+      <h2>Project Settings</h2>
+
+      <div class="settings-row">
+        <div class="field">
+          <label for="project-name">Project Name</label>
+          <input type="text" id="project-name" value="{{ config.project_name }}"
+                 placeholder="e.g. Yosuki Find Your Sound 2026">
+          <p class="hint">Used as the top-level folder name for all output. Does not affect individual file names.</p>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <div class="field">
+          <label>Output Destination</label>
+          <div class="radio-group">
+            <label>
+              <input type="radio" name="dest-type" value="local"
+                     {% if config.output_destination.type == 'local' %}checked{% endif %}>
+              Local folder
+            </label>
+            <label>
+              <input type="radio" name="dest-type" value="gcs"
+                     {% if config.output_destination.type == 'gcs' %}checked{% endif %}>
+              Google Cloud Storage
+            </label>
+            <label>
+              <input type="radio" name="dest-type" value="drive"
+                     {% if config.output_destination.type == 'drive' %}checked{% endif %}>
+              Google Drive
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="dest-panel" id="dest-local"
+           {% if config.output_destination.type != 'local' %}hidden{% endif %}>
+        <div class="field">
+          <label for="local-path">Local output path</label>
+          <input type="text" id="local-path" value="{{ config.output_destination.local_path }}"
+                 placeholder="./output">
+          <p class="hint">Relative to project root, or absolute path. Subfolders: Project / Date / Time / renders/</p>
+        </div>
+      </div>
+
+      <div class="dest-panel" id="dest-gcs"
+           {% if config.output_destination.type != 'gcs' %}hidden{% endif %}>
+        <div class="field">
+          <label for="gcs-bucket">GCS Bucket name</label>
+          <input type="text" id="gcs-bucket" value="{{ config.output_destination.gcs_bucket }}"
+                 placeholder="my-renders-bucket">
+        </div>
+        <div class="field">
+          <label for="gcs-prefix">GCS path prefix</label>
+          <input type="text" id="gcs-prefix" value="{{ config.output_destination.gcs_prefix }}"
+                 placeholder="renders">
+          <p class="hint">Auth: set GCS_KEY_FILE in .env (service account JSON) or use Application Default Credentials.</p>
+        </div>
+      </div>
+
+      <div class="dest-panel" id="dest-drive"
+           {% if config.output_destination.type != 'drive' %}hidden{% endif %}>
+        <p class="hint">Set GOOGLE_DRIVE_FOLDER_ID in .env. Requires google_service_account.json at project root.</p>
+      </div>
+
+      <button id="save-project-btn" class="btn secondary">Save Project Settings</button>
+    </section>
+
     <!-- ── Step 1: Upload Brief ── -->
     <section class="card {% if brief_uploaded %}done{% endif %}">
       <h2><span class="step">1</span> Upload Campaign Brief</h2>
