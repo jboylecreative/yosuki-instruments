@@ -39,20 +39,39 @@ The `sample_assets/` folder in the project root contains everything needed to ru
 
 ## Setup (one-time per machine)
 
-### 1. Install Python dependencies
+### 1. Create a Python virtual environment
+
+From the project root, create and activate a virtualenv using Python 3.11–3.13:
+
+**macOS / Linux:**
+```
+python3.12 -m venv .venv
+source .venv/bin/activate
+```
+
+**Windows (PowerShell):**
+```
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+Your shell prompt should now show `(.venv)`. While activated, plain `python` and `pip` point to the project's isolated environment. Run `deactivate` when you want to exit.
+
+> **Note:** macOS ships with Python 3.9, which is too old (the app uses `str | None` syntax that requires 3.10+). If `python3.12` isn't found, install it from [python.org/downloads](https://www.python.org/downloads/macos/) — grab the "macOS 64-bit universal2 installer" for the latest 3.12.x.
+
+### 2. Install Python dependencies
+
+With the virtualenv activated:
 
 ```
-On Windows:
-
 pip install -r requirements.txt
 
-or on Mac use:
+or try:
 
 python3 -m uvicorn app.main:app --reload
-
 ```
 
-### 2. Install Node dependencies
+### 3. Install Node dependencies
 
 ```
 npm install
@@ -60,7 +79,7 @@ npm install
 
 This installs `nexrender-cli`, which step 4 uses to run the AEP build script headlessly via aerender.
 
-### 3. Configure API key
+### 4. Configure API key
 
 ```
 cp .env.example .env
@@ -68,9 +87,12 @@ cp .env.example .env
 
 Open `.env` and fill in your `GEMINI_API_KEY`.
 
+
 ---
 
 ## Start the server
+
+Make sure your virtualenv is activated (`source .venv/bin/activate`), then:
 
 ```
 On Windows:
