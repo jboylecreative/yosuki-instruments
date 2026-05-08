@@ -42,7 +42,8 @@ The `sample_assets/` folder in the project root contains everything needed to ru
 ### 1. Install Python dependencies
 
 ```
-pip install -r requirements.txt
+pip3 install -r requirements.txt
+
 ```
 
 ### 2. Install Node dependencies
