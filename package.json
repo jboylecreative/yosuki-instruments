@@ -1,9 +1,9 @@
 {
-  "name": "yosuki-pipeline",
+  "name": "motion-graphics-pipeline",
   "version": "1.0.0",
-  "description": "Yosuki motion graphics pipeline - nexrender batch rendering",
+  "private": true,
+  "description": "nexrender-cli is used by step_04_build_output_aep.py to run build_output_aep.jsx headlessly via aerender",
   "dependencies": {
-    "@nexrender/cli": "^1.0.0",
-    "@nexrender/action-copy": "^1.0.0"
+    "@nexrender/cli": "^1.63.3"
   }
 }

@@ -3,216 +3,321 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Yosuki Motion Graphics Pipeline</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <title>Motion Graphics Pipeline</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
+  <style>
+    /* ── Output Location compact ── */
+    .dest-compact {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      flex-wrap: wrap;
+    }
+    .dest-compact .dest-path-label {
+      font-size: .82rem;
+      color: var(--muted);
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dest-drive-hint {
+      font-size: .85rem;
+      color: var(--muted);
+      padding: .5rem 0;
+    }
+
+    /* ── Drive connection badge ── */
+    .drive-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      font-size: .82rem;
+      padding: .25rem .65rem;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+    .drive-badge.connected {
+      background: rgba(76,175,80,.15);
+      color: var(--ok, #4caf50);
+      border: 1px solid rgba(76,175,80,.3);
+    }
+    .drive-badge.disconnected {
+      background: rgba(136,136,136,.1);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    /* ── Big run button ── */
+    .btn-run {
+      padding: 1rem 3rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+      width: 100%;
+      max-width: 400px;
+    }
+    .btn-run:hover:not(:disabled) { opacity: .9; transform: translateY(-1px); }
+    .btn-run:disabled { opacity: .35; cursor: not-allowed; transform: none; }
+    .run-note { font-size: .8rem; color: var(--muted); }
+
+    /* ── Run status / spinner ── */
+    #run-status {
+      display: none;
+      align-items: center;
+      gap: .75rem;
+      padding: .9rem 1.1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 1.25rem;
+    }
+    #run-status.visible { display: flex; }
+    .run-spinner {
+      width: 18px;
+      height: 18px;
+      border: 2.5px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      flex-shrink: 0;
+    }
+    .run-spinner.done {
+      border-color: var(--ok, #4caf50);
+      animation: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #run-status-text {
+      font-size: .9rem;
+      color: var(--text);
+      flex: 1;
+    }
+  </style>
 </head>
 <body>
   <header>
-    <h1>Yosuki Motion Graphics Pipeline</h1>
-    <nav><a href="/">Setup</a> <a href="/results">Results</a></nav>
+    <h1>Motion Graphics Pipeline</h1>
+    <button id="reset-btn" class="btn secondary small"
+            style="margin-left:auto;opacity:.6;"
+            title="Clear all uploads, parsed data, and project settings">
+      Reset
+    </button>
   </header>
 
   <main>
 
-    <!-- ── Project Settings ── -->
-    <section class="card project-settings">
-      <h2>Project Settings</h2>
+    <!-- ── Step 1: Project Name ── -->
+    <section class="card">
+      <h2><span class="step">1</span> Name Your Project</h2>
+      <div class="field">
+        <input type="text" id="project-name"
+               value="{{ config.project_name }}"
+               placeholder="e.g. Spring Campaign 2026">
+        <p class="hint">Used as the folder name for all output files.</p>
+      </div>
+    </section>
 
-      <div class="settings-row">
-        <div class="field">
-          <label for="project-name">Project Name</label>
-          <input type="text" id="project-name" value="{{ config.project_name }}"
-                 placeholder="e.g. Yosuki Find Your Sound 2026">
-          <p class="hint">Used as the top-level folder name for all output. Does not affect individual file names.</p>
+    <!-- ── Step 2: Upload Brief ── -->
+    <section class="card {% if brief_parsed %}done{% endif %}">
+      <h2><span class="step">2</span> Upload Campaign Brief</h2>
+      {% if brief_parsed %}
+        <p class="status ok">Brief parsed ✓ — <a href="/data/campaign_brief.json" target="_blank">view JSON</a></p>
+      {% elif brief_pdf_ready %}
+        <p class="status" style="color:var(--muted);font-size:.85rem;">brief.pdf on file — will be parsed when you run</p>
+      {% endif %}
+      <div class="upload-area" id="brief-drop">
+        <p>Drop your brief PDF here, or <label for="brief-file" class="link">browse</label></p>
+        <input type="file" id="brief-file" accept=".pdf" hidden>
+      </div>
+      {% if brief_pdf_ready %}
+        <p class="hint" style="margin-top:.5rem;">Re-upload to replace</p>
+      {% endif %}
+    </section>
+
+    <!-- ── Step 3: Upload Assets ── -->
+    <section class="card {% if asset_matches %}done{% endif %}">
+      <h2><span class="step">3</span> Upload Asset Folder</h2>
+      {% if asset_matches %}
+        <p class="status ok">Assets matched ✓ — <a href="/data/asset_manifest.json" target="_blank">view mapping</a></p>
+      {% elif assets_ready %}
+        <p class="status" style="color:var(--muted);font-size:.85rem;">Files on file — will be matched when you run</p>
+      {% endif %}
+      <div class="upload-area" id="asset-drop">
+        <p>Drop your entire asset folder here, or <label for="asset-file" class="link">browse folder</label></p>
+        <input type="file" id="asset-file" webkitdirectory multiple hidden>
+      </div>
+      <p class="hint">Upload the whole folder at once. Accepts PNG and GLB files.</p>
+    </section>
+
+    <!-- ── Step 4: Output Sizes ── -->
+    <section class="card">
+      <h2><span class="step">4</span> Output Sizes</h2>
+      <div id="sizes-list" class="sizes-list">
+        {% for s in config.sizes %}
+        <div class="size-row" data-id="{{ s.id }}">
+          <label class="model-toggle {% if s.enabled %}size-on{% endif %}">
+            <input type="checkbox" class="size-toggle-cb" data-id="{{ s.id }}"
+                   {% if s.enabled %}checked{% endif %}>
+            <span>{{ s.label }}</span>
+            <em class="size-res">{{ s.width }}×{{ s.height }}</em>
+          </label>
+          {% if not s.billboard %}
+          <button class="btn small danger remove-size-btn" data-id="{{ s.id }}"
+                  title="Remove size">×</button>
+          {% endif %}
         </div>
+        {% endfor %}
       </div>
 
-      <div class="settings-row">
-        <div class="field">
-          <label>Output Destination</label>
-          <div class="radio-group">
-            <label>
-              <input type="radio" name="dest-type" value="local"
-                     {% if config.output_destination.type == 'local' %}checked{% endif %}>
-              Local folder
-            </label>
-            <label>
-              <input type="radio" name="dest-type" value="gcs"
-                     {% if config.output_destination.type == 'gcs' %}checked{% endif %}>
-              Google Cloud Storage
-            </label>
-            <label>
-              <input type="radio" name="dest-type" value="drive"
-                     {% if config.output_destination.type == 'drive' %}checked{% endif %}>
-              Google Drive
-            </label>
-          </div>
+      <details class="add-size-wrap">
+        <summary class="link" style="font-size:.85rem;margin-top:.75rem;cursor:pointer;">+ Add custom size</summary>
+        <div class="add-size-form">
+          <input type="number" id="new-size-w" placeholder="Width px" min="100" max="7680">
+          <span style="color:var(--muted)">×</span>
+          <input type="number" id="new-size-h" placeholder="Height px" min="100" max="4320">
+          <input type="text" id="new-size-label" placeholder="Label (e.g. Stories / 9:16)" style="flex:2">
+          <button id="add-size-btn" class="btn secondary small">Add</button>
         </div>
+      </details>
+    </section>
+
+    <!-- ── Step 5: Output Location ── -->
+    <section class="card">
+      <h2><span class="step">5</span> Output Location</h2>
+
+      <div class="radio-group" style="margin-bottom:.75rem;">
+        <label>
+          <input type="radio" name="dest-type" value="local"
+                 {% if config.output_destination.type != 'drive' %}checked{% endif %}>
+          Save to my computer
+        </label>
+        <label>
+          <input type="radio" name="dest-type" value="drive"
+                 {% if config.output_destination.type == 'drive' %}checked{% endif %}>
+          Google Drive
+        </label>
       </div>
 
       <div class="dest-panel" id="dest-local"
-           {% if config.output_destination.type != 'local' %}hidden{% endif %}>
-        <div class="field">
-          <label for="local-path">Local output path</label>
-          <input type="text" id="local-path" value="{{ config.output_destination.local_path }}"
-                 placeholder="./output">
-          <p class="hint">Relative to project root, or absolute path. Subfolders: Project / Date / Time / renders/</p>
+           {% if config.output_destination.type == 'drive' %}style="display:none"{% endif %}>
+        <div class="dest-compact">
+          <button class="btn secondary small" id="browse-btn">Browse…</button>
+          <span class="dest-path-label" id="dest-path-display"
+                title="{{ config.output_destination.local_path }}"
+                style="{% if not config.output_destination.local_path %}color:var(--muted);font-style:italic;{% endif %}">
+            {{ config.output_destination.local_path or 'No folder selected' }}
+          </span>
         </div>
-      </div>
-
-      <div class="dest-panel" id="dest-gcs"
-           {% if config.output_destination.type != 'gcs' %}hidden{% endif %}>
-        <div class="field">
-          <label for="gcs-bucket">GCS Bucket name</label>
-          <input type="text" id="gcs-bucket" value="{{ config.output_destination.gcs_bucket }}"
-                 placeholder="my-renders-bucket">
-        </div>
-        <div class="field">
-          <label for="gcs-prefix">GCS path prefix</label>
-          <input type="text" id="gcs-prefix" value="{{ config.output_destination.gcs_prefix }}"
-                 placeholder="renders">
-          <p class="hint">Auth: set GCS_KEY_FILE in .env (service account JSON) or use Application Default Credentials.</p>
-        </div>
+        <input type="hidden" id="local-path" value="{{ config.output_destination.local_path }}">
+        <p class="hint" style="margin-top:.5rem;">Renders save here in subfolders: Date / Time / Project / Renders &amp; AE Project</p>
       </div>
 
       <div class="dest-panel" id="dest-drive"
-           {% if config.output_destination.type != 'drive' %}hidden{% endif %}>
-        <p class="hint">Set GOOGLE_DRIVE_FOLDER_ID in .env. Requires google_service_account.json at project root.</p>
-      </div>
-
-      <button id="save-project-btn" class="btn secondary">Save Project Settings</button>
-    </section>
-
-    <!-- ── Step 1: Upload Brief ── -->
-    <section class="card {% if brief_uploaded %}done{% endif %}">
-      <h2><span class="step">1</span> Upload Campaign Brief</h2>
-      {% if brief_uploaded %}
-        <p class="status ok">Brief parsed ✓ — <a href="/data/campaign_brief.json" target="_blank">view JSON</a></p>
-      {% endif %}
-      <div class="upload-area" id="brief-drop">
-        <p>Drop brief PDF here or <label for="brief-file" class="link">browse</label></p>
-        <input type="file" id="brief-file" accept=".pdf" hidden>
-      </div>
-      <button id="parse-brief-btn" class="btn primary" {% if not brief_uploaded %}disabled{% endif %}>
-        Parse Brief with Gemini
-      </button>
-    </section>
-
-    <!-- ── Step 2: Upload Assets ── -->
-    <section class="card {% if asset_manifest %}done{% endif %}">
-      <h2><span class="step">2</span> Upload Asset Folder</h2>
-      {% if asset_manifest %}
-        <p class="status ok">Assets matched ✓ — <a href="/data/asset_manifest.json" target="_blank">view mapping</a></p>
-      {% endif %}
-      <div class="upload-area" id="asset-drop">
-        <p>Drop entire asset folder here or <label for="asset-file" class="link">browse folder</label></p>
-        <input type="file" id="asset-file" webkitdirectory multiple hidden>
-      </div>
-      <p class="hint">Accepts PNG, GLB. Entire folder at once — no one-at-a-time.</p>
-    </section>
-
-    <!-- ── Step 3: Model Selection ── -->
-    <section class="card">
-      <h2><span class="step">3</span> Select Generation Models</h2>
-
-      <div class="model-group">
-        <h3>Stage 1 — Image Models (Product-in-Scene)</h3>
-        <div class="model-grid">
-          {% for m in config.stage1_image_models %}
-          <label class="model-toggle {% if m.primary %}primary{% endif %}">
-            <input type="checkbox" name="stage1" value="{{ m.id }}" {% if m.enabled %}checked{% endif %}>
-            <span>{{ m.label }}</span>
-            {% if m.primary %}<em>primary</em>{% endif %}
-          </label>
-          {% endfor %}
+           {% if config.output_destination.type != 'drive' %}style="display:none"{% endif %}>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;">
+          <span id="drive-badge" class="drive-badge disconnected">Not connected</span>
+          <div style="display:flex;gap:.5rem;align-items:center;">
+            <a id="drive-folder-link" href="#" target="_blank"
+               style="display:none;font-size:.82rem;color:var(--accent);">View folder ↗</a>
+            <button id="drive-connect-btn" class="btn secondary small"
+                    onclick="connectDrivePopup()">
+              Connect Google Drive
+            </button>
+            <button id="drive-disconnect-btn" class="btn small danger"
+                    style="display:none;" onclick="disconnectDrive()">
+              Disconnect
+            </button>
+          </div>
         </div>
+        <p class="dest-drive-hint" style="margin:.5rem 0 0;">
+          Sign in with your Google account — a folder named after your project is created automatically in your Drive root.
+        </p>
+      </div>
+    </section>
+
+    <!-- ── Step 6: Run ── -->
+    <section class="card" style="padding:2rem;">
+      <h2><span class="step">6</span> Run</h2>
+
+      <!-- Run status indicator -->
+      <div id="run-status">
+        <div class="run-spinner" id="run-spinner"></div>
+        <span id="run-status-text">Starting…</span>
       </div>
 
-      <div class="model-group">
-        <h3>Stage 2 — Video Models (Animation)</h3>
-        <div class="model-grid">
-          {% for m in config.stage2_video_models %}
-          <label class="model-toggle">
-            <input type="checkbox" name="stage2" value="{{ m.id }}" {% if m.enabled %}checked{% endif %}>
-            <span>{{ m.label }}</span>
-          </label>
-          {% endfor %}
-        </div>
-      </div>
-
-      <button id="save-models-btn" class="btn secondary">Save Model Selection</button>
-
-      <div class="model-group" style="margin-top:1.5rem;">
-        <h3>Output Sizes</h3>
-        <div id="sizes-list" class="sizes-list">
-          {% for s in config.sizes %}
-          <div class="size-row" data-id="{{ s.id }}">
-            <label class="model-toggle {% if s.enabled %}size-on{% endif %}">
-              <input type="checkbox" class="size-toggle-cb" data-id="{{ s.id }}"
-                     {% if s.enabled %}checked{% endif %}>
-              <span>{{ s.label }}</span>
-              <em class="size-res">{{ s.width }}×{{ s.height }}</em>
-            </label>
-            {% if not s.billboard %}
-            <button class="btn small danger remove-size-btn" data-id="{{ s.id }}"
-                    title="Remove size">×</button>
+      <!-- Preview -->
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
+          <div>
+            <strong style="font-size:.95rem;">Preview — selected asset, English, all sizes</strong>
+            <p style="font-size:.82rem;color:var(--muted);margin-top:.3rem;">
+              Runs the full pipeline for the selected asset in English across all enabled sizes — so you can review backgrounds, copy, and layout before committing to the full batch.
+            </p>
+          </div>
+          <div style="display:flex;align-items:center;gap:.5rem;flex-shrink:0;">
+            {% if asset_matches %}
+            <select id="preview-asset-select" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:.4rem .7rem;font-size:.85rem;">
+              {% for m in asset_matches %}
+              <option value="{{ m.asset_stem }}"
+                {% if m.asset_stem == config.preview_asset_id %}selected{% endif %}>
+                {{ m.asset_stem }}
+              </option>
+              {% endfor %}
+            </select>
             {% endif %}
+            <button id="preview-btn" class="btn secondary"
+                    {% if not run_ready %}disabled{% endif %}>
+              Preview Run
+            </button>
           </div>
-          {% endfor %}
         </div>
-
-        <details class="add-size-wrap">
-          <summary class="link" style="font-size:.85rem;margin-top:.75rem;cursor:pointer;">+ Add custom size</summary>
-          <div class="add-size-form">
-            <input type="number" id="new-size-w" placeholder="Width px" min="100" max="7680">
-            <span style="color:var(--muted)">×</span>
-            <input type="number" id="new-size-h" placeholder="Height px" min="100" max="4320">
-            <input type="text" id="new-size-label" placeholder="Label (e.g. Stories / 9:16)" style="flex:2">
-            <button id="add-size-btn" class="btn secondary small">Add</button>
-          </div>
-        </details>
       </div>
-    </section>
 
-    <!-- ── Step 4: Run ── -->
-    <section class="card">
-      <h2><span class="step">4</span> Run Pipeline</h2>
-
-      <div class="run-grid">
-        <div class="run-option">
-          <h3>Preview Run</h3>
-          <p>Generates backgrounds for one test asset using all selected models. Review results before committing to the full batch.</p>
-          <button id="preview-btn" class="btn primary" {% if not brief_uploaded %}disabled{% endif %}>
-            Preview ({{ config.preview_asset_id }} / {{ config.preview_aspect_ratio }})
-          </button>
-        </div>
-
-        <div class="run-option">
-          <h3>Full Batch</h3>
-          <p>Runs all 108+ variants with selected models. Builds output AEP and renders all MP4s.</p>
-          <button id="batch-btn" class="btn danger" {% if not copy_ready %}disabled{% endif %}>
-            Full Batch Run
-          </button>
-        </div>
-
-        <div class="run-option">
-          <h3>Re-render Only</h3>
-          <p>Rebuilds output AEP and re-renders from cached backgrounds. Use after editing the master AE template.</p>
-          <button id="rerender-btn" class="btn secondary" {% if not copy_ready %}disabled{% endif %}>
-            Re-render All
-          </button>
-        </div>
+      <!-- Full batch -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:.75rem;padding-top:.5rem;">
+        <button id="batch-btn" class="btn-run" {% if not run_ready %}disabled{% endif %}>
+          Generate &amp; Render All
+        </button>
+        {% if not run_ready %}
+          <p class="run-note">Upload your brief and assets to unlock.</p>
+        {% else %}
+          <p class="run-note">Parses brief, generates backgrounds, and renders every variant across all enabled sizes.</p>
+        {% endif %}
       </div>
     </section>
 
     <!-- ── Progress Log ── -->
     <section class="card" id="progress-section" hidden>
-      <h2>Progress</h2>
+      <h2>Progress Log</h2>
       <div id="progress-log"></div>
     </section>
 
   </main>
 
-  <script src="/static/app.js"></script>
+  {% if request.query_params.get('drive_connected') %}
+  <div id="drive-flash" style="position:fixed;top:1rem;right:1rem;background:var(--surface);
+       border:1px solid var(--ok,#4caf50);border-radius:8px;padding:.75rem 1.25rem;
+       color:var(--ok,#4caf50);font-size:.9rem;z-index:200;">
+    Google Drive connected ✓
+  </div>
+  <script>setTimeout(() => document.getElementById('drive-flash')?.remove(), 4000);</script>
+  {% endif %}
+
+  {% if request.query_params.get('drive_error') %}
+  <div id="drive-error-flash" style="position:fixed;top:1rem;right:1rem;background:var(--surface);
+       border:1px solid #e05252;border-radius:8px;padding:.75rem 1.25rem;
+       color:#e05252;font-size:.9rem;z-index:200;max-width:340px;">
+    Drive connection error: {{ request.query_params.get('drive_error') }}
+  </div>
+  <script>setTimeout(() => document.getElementById('drive-error-flash')?.remove(), 8000);</script>
+  {% endif %}
+
+  <script src="/static/app.js?v={{ static_version }}"></script>
 </body>
 </html>

@@ -20,7 +20,7 @@ def log(msg: str):
 
 
 def load_config() -> dict:
-    return json.loads((ROOT / "config.json").read_text())
+    return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 
 
 def run_step(step: int, args: argparse.Namespace, cfg: dict):
@@ -30,12 +30,19 @@ def run_step(step: int, args: argparse.Namespace, cfg: dict):
         run(cfg, dry_run=args.dry_run)
 
     elif step == 2:
-        log("── Step 2: Generating copy for all locales ──")
+        if args.preview:
+            log(f"── Step 2: Generating copy (preview — {args.preview_locale} only) ──")
+        else:
+            log("── Step 2: Generating copy for all locales ──")
         from pipeline.step_02_generate_copy import run
-        run(cfg, dry_run=args.dry_run)
+        run(cfg, dry_run=args.dry_run,
+            preview=args.preview, preview_locale=args.preview_locale)
 
     elif step == 3:
-        log("── Step 3: Generating backgrounds (Stage 1 image → Stage 2 video) ──")
+        if args.preview:
+            log("── Step 3: Generating background image (preview — Stage 1 only) ──")
+        else:
+            log("── Step 3: Generating backgrounds (Stage 1 image → Stage 2 video) ──")
         from pipeline.step_03_generate_backgrounds import run
         run(
             cfg,
@@ -50,10 +57,10 @@ def run_step(step: int, args: argparse.Namespace, cfg: dict):
     elif step == 4:
         log("── Step 4: Building output AEP ──")
         from pipeline.step_04_build_output_aep import run
-        run(cfg, dry_run=args.dry_run)
+        run(cfg, dry_run=args.dry_run, preview=args.preview)
 
     elif step == 5:
-        log("── Step 5: Batch rendering via nexrender / aerender ──")
+        log("── Step 5: Rendering all comps via aerender ──")
         from pipeline.step_05_render import run
         run(cfg, dry_run=args.dry_run)
 
@@ -69,9 +76,10 @@ def run_step(step: int, args: argparse.Namespace, cfg: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Yosuki pipeline orchestrator")
+    parser = argparse.ArgumentParser(description="Motion graphics pipeline orchestrator")
     parser.add_argument("--steps", default="1,2,3,4,5", help="Comma-separated steps to run")
-    parser.add_argument("--preview", action="store_true", help="Run step 3 in preview mode (one asset)")
+    parser.add_argument("--preview", action="store_true", help="Preview mode: one asset, one locale")
+    parser.add_argument("--preview-locale", default="en", help="Locale to use in preview mode (default: en)")
     parser.add_argument("--asset",  default=None, help="Filter by asset name (e.g. sax1)")
     parser.add_argument("--locale", default=None, help="Filter by locale (e.g. en)")
     parser.add_argument("--aspect", default=None, help="Filter by aspect ratio (e.g. 16x9)")

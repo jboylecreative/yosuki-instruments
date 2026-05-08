@@ -1,159 +1,186 @@
 """
-Step 7: Deliver final renders.
+Step 7: Deliver outputs to Google Drive.
 
-Dispatches based on output_destination.type in config:
-  "local"  — files are already in place, nothing to move
-  "gcs"    — upload renders dir to Google Cloud Storage
-  "drive"  — upload to Google Drive folder
+Uploads all render artifacts from the current run to Google Drive:
+  - renders/ subtree (all MP4 files, organised by locale)
+  - output.aep + (Footage)/ folder (under an "AE Project" subfolder)
 
-GCS path structure: {gcs_prefix}/{project_name}/{YYYY-MM-DD}/{HH-MM-SS}/{filename}
-Auth: GCS_KEY_FILE env var (service account JSON) or Application Default Credentials
+Folder hierarchy in Drive:
+  <project folder>  ← auto-created at connect time, stored in config.json
+    └── YYYY-MM-DD/
+        └── HH-MM-SS/
+            ├── renders/
+            │   └── ...locale subdirs...
+            └── AE Project/
+                ├── output.aep
+                └── (Footage)/
+
+Skips silently if output_destination.type is not "drive".
 """
-import json
-import os
+import mimetypes
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).parent.parent
-load_dotenv(ROOT / ".env")
-
 DATA = ROOT / "data"
-
-
-def _resolve_output_base(cfg: dict) -> Path:
-    dest = cfg.get("output_destination", {})
-    local_path = dest.get("local_path", "./output")
-    p = Path(local_path)
-    return p if p.is_absolute() else (ROOT / p).resolve()
+_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 
 def _get_run_dir(cfg: dict) -> Path | None:
     run_id_file = DATA / "current_run_id.txt"
     if not run_id_file.exists():
         return None
-    run_timestamp = run_id_file.read_text().strip()
-    project_name = cfg.get("project_name", "output")
-    return _resolve_output_base(cfg) / project_name / run_timestamp
-
-
-def _deliver_gcs(cfg: dict, run_dir: Path, files: list[Path], dry_run: bool):
+    run_id = run_id_file.read_text().strip()
     dest = cfg.get("output_destination", {})
-    bucket_name = dest.get("gcs_bucket", "") or os.environ.get("GCS_BUCKET", "")
-    if not bucket_name:
-        print("  ERROR: gcs_bucket not set in config or GCS_BUCKET env var")
-        return
-
-    gcs_prefix = dest.get("gcs_prefix", "renders").rstrip("/")
+    local_path = dest.get("local_path", "./output")
+    p = Path(local_path)
+    output_base = p if p.is_absolute() else (ROOT / p).resolve()
     project_name = cfg.get("project_name", "output")
-    run_timestamp = (DATA / "current_run_id.txt").read_text().strip()
-    gcs_base = f"{gcs_prefix}/{project_name}/{run_timestamp}"
-
-    if dry_run:
-        print(f"  [DRY RUN] Would upload {len(files)} files to gs://{bucket_name}/{gcs_base}/")
-        return
-
-    try:
-        from google.cloud import storage as gcs
-    except ImportError:
-        print("  google-cloud-storage not installed — pip install google-cloud-storage")
-        return
-
-    key_file = os.environ.get("GCS_KEY_FILE", "").strip()
-    if key_file and Path(key_file).exists():
-        client = gcs.Client.from_service_account_json(key_file)
-    else:
-        client = gcs.Client()
-
-    bucket = client.bucket(bucket_name)
-    links = {}
-
-    for i, file_path in enumerate(files, 1):
-        blob_name = f"{gcs_base}/{file_path.name}"
-        print(f"  [{i}/{len(files)}] → gs://{bucket_name}/{blob_name}")
-        blob = bucket.blob(blob_name)
-        blob.upload_from_filename(str(file_path))
-        blob.make_public()
-        links[file_path.name] = blob.public_url
-
-    links_path = DATA / "gcs_links.json"
-    links_path.write_text(json.dumps(links, indent=2))
-    print(f"  Uploaded {len(links)} files to GCS — links saved to data/gcs_links.json")
+    return output_base / project_name / run_id
 
 
-def _deliver_drive(run_dir: Path, files: list[Path], dry_run: bool):
-    folder_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
-    if not folder_id:
-        print("  GOOGLE_DRIVE_FOLDER_ID not set — skipping Drive delivery")
-        return
+def _load_credentials():
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
 
-    if dry_run:
-        print(f"  [DRY RUN] Would upload {len(files)} files to Drive folder {folder_id}")
-        return
+    token_path = DATA / "drive_token.json"
+    if not token_path.exists():
+        raise FileNotFoundError(
+            "data/drive_token.json not found — "
+            "click 'Connect Google Drive' in the dashboard first."
+        )
+    creds = Credentials.from_authorized_user_file(str(token_path), _SCOPES)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        token_path.write_text(creds.to_json())
+    return creds
 
-    try:
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaFileUpload
-    except ImportError:
-        print("  google-api-python-client not installed — skipping Drive delivery")
-        return
 
-    creds_path = ROOT / "google_service_account.json"
-    if not creds_path.exists():
-        print("  google_service_account.json not found — skipping Drive delivery")
-        return
+def _get_or_create_folder(service, name: str, parent_id: str) -> str:
+    """Find or create a Drive folder under parent_id. Returns folder ID."""
+    safe = name.replace("'", "\\'")
+    query = (
+        f"name='{safe}' and '{parent_id}' in parents and "
+        "mimeType='application/vnd.google-apps.folder' and trashed=false"
+    )
+    result = service.files().list(q=query, fields="files(id)", spaces="drive").execute()
+    items = result.get("files", [])
+    if items:
+        return items[0]["id"]
+    meta = {
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
+    }
+    folder = service.files().create(body=meta, fields="id").execute()
+    return folder["id"]
 
-    SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-    creds = service_account.Credentials.from_service_account_file(str(creds_path), scopes=SCOPES)
-    service = build("drive", "v3", credentials=creds)
 
-    drive_links = {}
-    for i, file_path in enumerate(files, 1):
-        print(f"  [{i}/{len(files)}] Uploading: {file_path.name}")
-        mime = "video/mp4" if file_path.suffix == ".mp4" else "application/octet-stream"
-        metadata = {"name": file_path.name, "parents": [folder_id]}
-        media = MediaFileUpload(str(file_path), mimetype=mime, resumable=True)
-        uploaded = service.files().create(
-            body=metadata, media_body=media, fields="id,webViewLink"
-        ).execute()
-        drive_links[file_path.name] = uploaded.get("webViewLink", "")
-        print(f"    → {uploaded.get('webViewLink', 'no link')}")
+def _upload_file(service, local_path: Path, parent_folder_id: str) -> str:
+    """Upload a single file using resumable upload. Returns Drive file ID."""
+    from googleapiclient.http import MediaFileUpload
 
-    links_path = DATA / "drive_links.json"
-    links_path.write_text(json.dumps(drive_links, indent=2))
-    print(f"  Delivered {len(drive_links)} files to Google Drive")
+    mime_type, _ = mimetypes.guess_type(str(local_path))
+    if mime_type is None:
+        mime_type = "application/octet-stream"
+    metadata = {"name": local_path.name, "parents": [parent_folder_id]}
+    media = MediaFileUpload(
+        str(local_path),
+        mimetype=mime_type,
+        resumable=True,
+        chunksize=10 * 1024 * 1024,  # 10 MB chunks — safe for 1+ GB AEP files
+    )
+    file = service.files().create(body=metadata, media_body=media, fields="id").execute()
+    return file["id"]
+
+
+def _mirror_directory(service, local_dir: Path, drive_parent_id: str):
+    """Recursively mirror a local directory tree into Drive."""
+    folder_id = _get_or_create_folder(service, local_dir.name, drive_parent_id)
+    for item in sorted(local_dir.iterdir()):
+        if item.is_dir():
+            _mirror_directory(service, item, folder_id)
+        elif item.is_file():
+            size_kb = item.stat().st_size // 1024
+            print(f"    Uploading {item.name} ({size_kb} KB)…")
+            _upload_file(service, item, folder_id)
 
 
 def run(cfg: dict, dry_run: bool = False):
+    load_dotenv(ROOT / ".env")
+
+    dest = cfg.get("output_destination", {})
+    if dest.get("type") != "drive":
+        print("  Output destination is not Google Drive — skipping upload")
+        return
+
     run_dir = _get_run_dir(cfg)
-    if not run_dir:
-        print("  No current run found — run Step 4 first")
+    if not run_dir or not run_dir.exists():
+        print("  No current run directory found — run Steps 4+5 first")
+        return
+
+    drive_folder_id = dest.get("drive_folder_id", "").strip()
+    if not drive_folder_id:
+        print("  ERROR: No Drive folder configured — click 'Connect Google Drive' in the dashboard.")
         return
 
     renders_dir = run_dir / "renders"
-    output_aep = run_dir / "output.aep"
+    aep_candidates = list(run_dir.glob("*.aep"))
+    aep = aep_candidates[0] if aep_candidates else None
+    footage_dir = run_dir / "(Footage)"
     mp4s = list(renders_dir.rglob("*.mp4")) if renders_dir.exists() else []
-    files_to_upload = mp4s + ([output_aep] if output_aep.exists() else [])
 
-    if not files_to_upload:
-        print("  No files to deliver — run Steps 4+5 first")
+    if dry_run:
+        print(f"  [DRY RUN] Would upload to Google Drive from {run_dir}")
+        print(f"    {len(mp4s)} MP4(s), AEP: {aep is not None}, Footage: {footage_dir.exists()}")
         return
 
-    print(f"  {len(mp4s)} MP4s + {'1 AEP' if output_aep.exists() else '0 AEP'} ready for delivery")
+    try:
+        creds = _load_credentials()
+    except FileNotFoundError as exc:
+        print(f"  ERROR: {exc}")
+        return
+    except Exception as exc:
+        print(f"  ERROR refreshing Google Drive credentials: {exc}")
+        return
 
-    dest_type = cfg.get("output_destination", {}).get("type", "local")
+    from googleapiclient.discovery import build
+    service = build("drive", "v3", credentials=creds)
 
-    if dest_type == "local":
-        print(f"  Output destination: local — files already at {run_dir}")
+    # Build run folder hierarchy: project_root → date → time
+    run_id = run_dir.name  # format: YYYY-MM-DD_HH-MM-SS
+    parts = run_id.split("_", 1)
+    date_part = parts[0]
+    time_part = parts[1] if len(parts) > 1 else run_id
 
-    elif dest_type == "gcs":
-        print(f"  Output destination: Google Cloud Storage")
-        _deliver_gcs(cfg, run_dir, files_to_upload, dry_run)
+    print("  Building Drive folder hierarchy…")
+    date_folder_id = _get_or_create_folder(service, date_part, drive_folder_id)
+    run_folder_id  = _get_or_create_folder(service, time_part, date_folder_id)
 
-    elif dest_type == "drive":
-        print(f"  Output destination: Google Drive")
-        _deliver_drive(run_dir, files_to_upload, dry_run)
+    if renders_dir.exists():
+        print(f"  Uploading renders/ ({len(mp4s)} MP4s)…")
+        try:
+            _mirror_directory(service, renders_dir, run_folder_id)
+        except Exception as exc:
+            print(f"  ERROR uploading renders: {exc}")
 
-    else:
-        print(f"  Unknown output destination type: {dest_type}")
+    ae_folder_id = _get_or_create_folder(service, "AE Project", run_folder_id)
+
+    if aep:
+        size_mb = aep.stat().st_size // (1024 * 1024)
+        print(f"  Uploading {aep.name} ({size_mb} MB)…")
+        try:
+            _upload_file(service, aep, ae_folder_id)
+        except Exception as exc:
+            print(f"  ERROR uploading {aep.name}: {exc}")
+
+    if footage_dir.exists():
+        print("  Uploading (Footage)/…")
+        try:
+            _mirror_directory(service, footage_dir, ae_folder_id)
+        except Exception as exc:
+            print(f"  ERROR uploading (Footage)/: {exc}")
+
+    drive_url = dest.get("drive_folder_url", "")
+    print(f"  Drive upload complete.{('  View: ' + drive_url) if drive_url else ''}")

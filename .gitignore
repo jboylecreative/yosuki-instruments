@@ -8,3 +8,4 @@ output/
 data/
 output/*.aep
 google_service_account.json
+data/drive_token.json

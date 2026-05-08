@@ -1,29 +1,23 @@
 """
-Step 3: Two-stage background generation via fal.ai.
+Step 3: Background image generation via Google Gemini API (Nano Banana 2).
 
-Stage 1 — Image synthesis: product PNG + scene prompt → instrument placed in scene
-Stage 2 — Video animation: Stage 1 image + motion prompt → 6-8s animated clip
+Scene prompt → Nano Banana 2 generates background still image at 2× target resolution.
 
 Output structure:
-  generated/backgrounds/{product_id}_{model_id}_{variant_id}/{aspect_ratio}/
-    stage1/{img_model_id}/gen_001.png   (2× target resolution)
-    stage2/{vid_model_id}/gen_001.mp4   (6-8s, subtle motion)
-
-Resolution targets (2× output resolution):
-  16x9     → 3840×2160
-  Billboard→ 3840×960  (generated as 16:9 then cropped in AE)
-  1x1      → 2160×2160
+  generated/backgrounds/{product_id}_{model_id}_{variant_id}/{size_id}/
+    stage1/{img_model_id}/gen_001.png
 """
 import asyncio
-import base64
+import io
 import json
 import os
-import time
 from pathlib import Path
 
-import fal_client
+from PIL import Image
+
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
-from pipeline.clients.firefly import generate_image as firefly_generate_image
 
 ROOT = Path(__file__).parent.parent
 load_dotenv(ROOT / ".env")
@@ -32,24 +26,17 @@ DATA = ROOT / "data"
 GEN = ROOT / "generated" / "backgrounds"
 GEN.mkdir(parents=True, exist_ok=True)
 
-# Legacy key aliases — maps old aspect ratio labels to new resolution-string IDs.
-# Allows brief JSONs generated before the sizes refactor to continue working.
 _LEGACY_SIZE_MAP = {
     "16x9":      "1920x1080",
     "1x1":       "1080x1080",
     "Billboard": "970x250",
 }
 
-# No billboard suffix needed here — billboard prompt is supplied by step_02's
-# background_prompt_billboard key and routed in process_variant().
-
 
 def _build_size_lookup(cfg: dict) -> dict:
-    """Return {size_id: {gen_width, gen_height, billboard}} from config, with legacy fallback."""
     sizes = cfg.get("sizes", [])
     if sizes:
         return {s["id"]: s for s in sizes}
-    # Hardcoded fallback if config has no sizes yet
     return {
         "1920x1080": {"gen_width": 3840, "gen_height": 2160, "billboard": False},
         "1080x1080": {"gen_width": 2160, "gen_height": 2160, "billboard": False},
@@ -61,57 +48,99 @@ def _normalize_size_id(size_id: str) -> str:
     return _LEGACY_SIZE_MAP.get(size_id, size_id)
 
 
-def _find_hero_stage1_image(product_id: str, model_id: str, variant_id: str,
-                              cfg: dict) -> Path | None:
-    """Return the best available stage1 image for the hero (1920x1080) size.
-
-    Used as the reference image when generating the billboard atmospheric background.
-    Prefers the primary image model's output; falls back to any available result.
-    """
-    hero_size = "1920x1080"
-    slug = f"{product_id}_{model_id}_{variant_id}"
-    base = GEN / slug / hero_size / "stage1"
-    if not base.exists():
-        return None
-
-    primary_id = next(
-        (m["id"] for m in cfg.get("stage1_image_models", []) if m.get("primary")), None
-    )
-    if primary_id:
-        primary_dir = base / primary_id
-        images = sorted(primary_dir.glob("gen_*.png")) if primary_dir.exists() else []
-        if images:
-            return images[-1]
-
-    for img in sorted(base.rglob("gen_*.png")):
-        return img
-    return None
-
-
 def _out_dir(product_id: str, model_id: str, variant_id: str, size_id: str) -> Path:
     slug = f"{product_id}_{model_id}_{variant_id}"
     return GEN / slug / size_id
 
 
-def _next_gen_index(directory: Path) -> int:
-    existing = list(directory.glob("gen_*.png")) + list(directory.glob("gen_*.mp4"))
+def _next_gen_index(directory: Path, primary_model_id: str | None = None) -> int:
+    """Return the next generation index for a variant/size directory.
+
+    Scopes to the primary model's stage1 folder so that switching models or adding
+    a second model doesn't inflate the index from unrelated previous runs.
+    """
+    if primary_model_id:
+        search = directory / "stage1" / primary_model_id
+        existing = sorted(search.glob("gen_*.png")) if search.exists() else []
+    else:
+        existing = list(directory.rglob("gen_*.png")) + list(directory.rglob("gen_*.mp4"))
     if not existing:
         return 1
     nums = [int(f.stem.split("_")[1]) for f in existing if f.stem.split("_")[1].isdigit()]
     return max(nums) + 1 if nums else 1
 
 
-def _image_to_data_uri(path: Path) -> str:
-    data = base64.standard_b64encode(path.read_bytes()).decode()
-    return f"data:image/png;base64,{data}"
+def _gemini_client() -> genai.Client:
+    return genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
-async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
-                           asset_png: Path, prompt: str, size_id: str,
-                           gen_width: int, gen_height: int, is_billboard: bool,
+def _image_mime_type(path: Path) -> str:
+    return "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+
+
+def _aspect_ratio_label(gen_width: int, gen_height: int) -> str:
+    """Human-readable aspect ratio label used in the prompt for non-standard ratios."""
+    ratio = gen_width / gen_height
+    if ratio >= 3.0:
+        return "ultra-wide panoramic"
+    elif ratio >= 1.5:
+        return "16:9 landscape"
+    elif ratio >= 1.1:
+        return "4:3 landscape"
+    elif ratio >= 0.9:
+        return "1:1 square"
+    elif ratio >= 0.7:
+        return "3:4 portrait"
+    else:
+        return "9:16 portrait"
+
+
+def _image_api_aspect_ratio(gen_width: int, gen_height: int) -> str:
+    """Map pixel dimensions to the closest supported ImageConfig aspect_ratio string.
+    Supported: 1:1, 1:4, 1:8, 2:3, 3:2, 3:4, 4:1, 4:3, 4:5, 5:4, 8:1, 9:16, 16:9, 21:9
+    """
+    ratio = gen_width / gen_height
+    if ratio >= 6.0:
+        return "8:1"
+    elif ratio >= 3.0:
+        return "4:1"   # billboard ~3.88:1
+    elif ratio >= 2.0:
+        return "21:9"
+    elif ratio >= 1.6:
+        return "16:9"
+    elif ratio >= 1.2:
+        return "4:3"
+    elif ratio >= 1.0:
+        return "1:1"
+    elif ratio >= 0.75:
+        return "4:5"
+    elif ratio >= 0.6:
+        return "3:4"
+    elif ratio >= 0.4:
+        return "2:3"
+    elif ratio >= 0.2:
+        return "1:4"
+    else:
+        return "1:8"
+
+
+async def generate_stage1(model_id: str, gemini_model: str,
+                           prompt: str, size_id: str,
+                           gen_width: int, gen_height: int,
                            out_dir: Path, gen_index: int,
-                           skip_existing: bool) -> Path | None:
-    out_dir.mkdir(parents=True, exist_ok=True)
+                           skip_existing: bool,
+                           asset_png: Path | None = None,
+                           brand_look: str = "",
+                           ref_type: str = "product",
+                           product_ref: Path | None = None) -> Path | None:
+    """
+    ref_type controls how the reference image is used:
+      "product"  — asset_png is the client's uploaded product photo; enforce exact instrument fidelity
+      "master"   — asset_png is the generated 16x9 hero; recreate same scene at new aspect ratio.
+                   If product_ref is also supplied, both images are sent: hero for scene consistency,
+                   product_ref for instrument fidelity.
+      "billboard" — asset_png is the generated 16x9 hero; recreate scene at ultra-wide aspect ratio
+    """
     out_path = out_dir / "stage1" / model_id / f"gen_{gen_index:03d}.png"
 
     if skip_existing and out_path.exists():
@@ -119,54 +148,151 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
         return out_path
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    ar_label = _aspect_ratio_label(gen_width, gen_height)
+    full_prompt = f"{ar_label} composition. {prompt}"
+
+    if ref_type != "billboard" and brand_look:
+        full_prompt = f"{full_prompt}. {brand_look}"
+
+    # Build multimodal contents with a reference image and a role-specific instruction
+    if asset_png and Path(asset_png).exists():
+        mime = _image_mime_type(Path(asset_png))
+        asset_bytes = Path(asset_png).read_bytes()
+
+        if ref_type == "product":
+            full_prompt = (
+                "Take the instrument shown in the attached reference image and place it into the scene "
+                "with a person actively playing it. Do not change the details or look and feel of the "
+                "instrument in any way and ensure it has the same appearance as the input image. "
+                + full_prompt
+            )
+            contents = [
+                types.Part.from_bytes(data=asset_bytes, mime_type=mime),
+                full_prompt,
+            ]
+        elif ref_type == "master":
+            if product_ref and Path(product_ref).exists():
+                # Dual reference: hero image for scene consistency + product image for instrument fidelity
+                product_mime = _image_mime_type(Path(product_ref))
+                product_bytes = Path(product_ref).read_bytes()
+                full_prompt = (
+                    "Generate a NEW square (1:1) image. "
+                    "Reference image 1 establishes the scene — match its lighting, mood, atmosphere, "
+                    "and environment exactly. Reference image 2 is the exact instrument — match all "
+                    "details, finish, and design precisely. "
+                    "Crop tighter around the performer to create a natural square composition. "
+                    "CRITICAL: Do NOT blend, ghost, double-expose, or composite either reference image "
+                    "into the output — generate entirely fresh pixel content. "
+                    "Do NOT squeeze, stretch, or distort the scene to fit a square canvas — "
+                    "this is a crop-and-reframe operation, not a resize. "
+                    "Performer and environment must look natural and undistorted within the square frame. "
+                    + full_prompt
+                )
+                contents = [
+                    types.Part.from_bytes(data=asset_bytes, mime_type=mime),
+                    types.Part.from_bytes(data=product_bytes, mime_type=product_mime),
+                    full_prompt,
+                ]
+            else:
+                full_prompt = (
+                    "Generate a NEW square (1:1) image. "
+                    "The reference image establishes the scene — match its lighting, mood, atmosphere, "
+                    "performer, instrument, and environment exactly. "
+                    "Crop tighter around the performer to create a natural square composition. "
+                    "CRITICAL: Do NOT blend, ghost, double-expose, or composite the reference image "
+                    "into the output — generate entirely fresh pixel content. "
+                    "Do NOT squeeze, stretch, or distort the scene to fit a square canvas — "
+                    "this is a crop-and-reframe operation, not a resize. "
+                    + full_prompt
+                )
+                contents = [
+                    types.Part.from_bytes(data=asset_bytes, mime_type=mime),
+                    full_prompt,
+                ]
+        elif ref_type == "billboard":
+            if product_ref and Path(product_ref).exists():
+                product_mime = _image_mime_type(Path(product_ref))
+                product_bytes = Path(product_ref).read_bytes()
+                full_prompt = (
+                    "Generate a NEW ultra-wide panoramic image. "
+                    "Reference image 1 establishes the scene — match its lighting, mood, atmosphere, "
+                    "and environment exactly. Reference image 2 is the exact instrument — match all "
+                    "details, finish, and design precisely. "
+                    "Extend the environment naturally to the left and right, as if the camera pulled back "
+                    "to reveal a wider view of the same venue — the crowd, architecture, lighting, and "
+                    "atmosphere must flow and continue seamlessly across the full width with no hard edges, "
+                    "visible seams, or abrupt transitions where the scene ends. "
+                    "Performer on the RIGHT side. Left side darker and open for text overlay. "
+                    "CRITICAL: Do NOT blend, ghost, double-expose, or composite either reference image "
+                    "into the output — generate entirely fresh pixel content. "
+                    + full_prompt
+                )
+                contents = [
+                    types.Part.from_bytes(data=asset_bytes, mime_type=mime),
+                    types.Part.from_bytes(data=product_bytes, mime_type=product_mime),
+                    full_prompt,
+                ]
+            else:
+                full_prompt = (
+                    "Generate a NEW ultra-wide panoramic image. "
+                    "The reference image establishes the scene — match its lighting, mood, atmosphere, "
+                    "and environment exactly. "
+                    "Extend the environment naturally to the left and right, as if the camera pulled back "
+                    "to reveal a wider view of the same venue — the crowd, architecture, lighting, and "
+                    "atmosphere must flow and continue seamlessly across the full width with no hard edges, "
+                    "visible seams, or abrupt transitions where the scene ends. "
+                    "Performer on the RIGHT side. Left side darker and open for text overlay. "
+                    "CRITICAL: Do NOT blend, ghost, double-expose, or composite the reference image "
+                    "into the output — generate entirely fresh pixel content. "
+                    + full_prompt
+                )
+                contents = [
+                    types.Part.from_bytes(data=asset_bytes, mime_type=mime),
+                    full_prompt,
+                ]
+        else:
+            contents = [
+                types.Part.from_bytes(data=asset_bytes, mime_type=mime),
+                full_prompt,
+            ]
+    else:
+        contents = [full_prompt]
+
+    api_ar = _image_api_aspect_ratio(gen_width, gen_height)
+    print(f"    Stage1 [{model_id}] {size_id} ({ar_label}, 2K) — submitting to Nano Banana 2...")
 
     try:
-        if provider == "firefly":
-            client_id = os.environ.get("FIREFLY_CLIENT_ID", "")
-            client_secret = os.environ.get("FIREFLY_CLIENT_SECRET", "")
-            if not client_id or not client_secret:
-                raise EnvironmentError("FIREFLY_CLIENT_ID / FIREFLY_CLIENT_SECRET not set")
+        client = _gemini_client()
 
-            print(f"    Stage1 [{model_id}] {size_id} — submitting to Adobe Firefly...")
-            img_bytes = await firefly_generate_image(
-                client_id=client_id,
-                client_secret=client_secret,
-                prompt=prompt,
-                width=gen_width,
-                height=gen_height,
-                reference_image_path=asset_png,
-            )
-            if img_bytes is None:
-                raise RuntimeError("Firefly returned no image bytes")
-            out_path.write_bytes(img_bytes)
-
-        else:
-            print(f"    Stage1 [{model_id}] {size_id} — submitting to fal.ai...")
-            import httpx
-            image_url = _image_to_data_uri(asset_png)
-
-            result = await asyncio.to_thread(
-                fal_client.run,
-                fal_path,
-                arguments={
-                    "prompt": prompt,
-                    "image_url": image_url,
-                    "width": gen_width,
-                    "height": gen_height,
-                    "num_inference_steps": 28,
-                    "guidance_scale": 3.5,
-                }
+        def _run():
+            return client.models.generate_content(
+                model=gemini_model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],
+                    image_config=types.ImageConfig(
+                        image_size="2K",
+                        aspect_ratio=api_ar,
+                    ),
+                ),
             )
 
-            img_url = result["images"][0]["url"] if "images" in result else result.get("image", {}).get("url")
-            if not img_url:
-                raise ValueError(f"No image URL in response: {list(result.keys())}")
+        response = await asyncio.wait_for(asyncio.to_thread(_run), timeout=120)
 
-            async with httpx.AsyncClient() as client:
-                r = await client.get(img_url, timeout=60)
-                r.raise_for_status()
-                out_path.write_bytes(r.content)
+        img_bytes = None
+        for part in response.parts:
+            if part.inline_data is not None:
+                img_bytes = part.inline_data.data
+                break
 
+        if not img_bytes:
+            raise ValueError("Nano Banana 2 returned no image")
+
+        # Nano Banana 2 returns JPEG bytes — convert to PNG for After Effects.
+        img = Image.open(io.BytesIO(img_bytes))
+        png_buf = io.BytesIO()
+        img.save(png_buf, format="PNG")
+        out_path.write_bytes(png_buf.getvalue())
         print(f"    Stage1 [{model_id}] saved → {out_path.name}")
         return out_path
 
@@ -175,134 +301,91 @@ async def generate_stage1(fal_path: str | None, model_id: str, provider: str,
         return None
 
 
-async def generate_stage2(fal_path: str, model_id: str, stage1_image: Path,
-                           prompt: str, size_id: str, out_dir: Path,
-                           gen_index: int, skip_existing: bool) -> Path | None:
-    out_path = out_dir / "stage2" / model_id / f"gen_{gen_index:03d}.mp4"
-
-    if skip_existing and out_path.exists():
-        print(f"    [skip] {out_path.relative_to(ROOT)}")
-        return out_path
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"    Stage2 [{model_id}] {size_id} — submitting to fal.ai...")
-
-    try:
-        image_url = _image_to_data_uri(stage1_image)
-
-        result = await asyncio.to_thread(
-            fal_client.run,
-            fal_path,
-            arguments={
-                "prompt": prompt,
-                "image_url": image_url,
-                "duration": "8",
-            }
-        )
-
-        # Download the result video
-        import httpx
-        vid_url = (
-            result.get("video", {}).get("url")
-            or (result.get("videos") or [{}])[0].get("url")
-        )
-        if not vid_url:
-            raise ValueError(f"No video URL in response: {list(result.keys())}")
-
-        async with httpx.AsyncClient() as client:
-            r = await client.get(vid_url, timeout=120)
-            r.raise_for_status()
-            out_path.write_bytes(r.content)
-
-        print(f"    Stage2 [{model_id}] saved → {out_path.name}")
-        return out_path
-
-    except Exception as e:
-        print(f"    ERROR Stage2 [{model_id}]: {e}")
-        return None
-
-
 async def process_variant(product_id: str, model_id: str, variant_id: str,
                            asset_png: Path, size_id: str, copy: dict,
                            cfg: dict, gen_index: int,
-                           filter_model: str | None = None):
+                           master_ref: Path | None = None) -> Path | None:
+    """Generate a Stage 1 background image for one variant/size.
+
+    master_ref: path to an already-generated 16x9 hero image for this variant.
+      If provided for a non-hero size, the hero is used as reference so the scene
+      stays visually consistent across all output sizes.
+    """
     size_id = _normalize_size_id(size_id)
     size_lookup = _build_size_lookup(cfg)
     size = size_lookup.get(size_id, {})
     gen_width = size.get("gen_width", 3840)
     gen_height = size.get("gen_height", 2160)
-    is_billboard = size.get("billboard", False)
 
     out_dir = _out_dir(product_id, model_id, variant_id, size_id)
     skip = cfg.get("skip_existing", True)
+    brand_look = cfg.get("brand_look", "")
+    is_billboard = size.get("billboard", False)
 
-    stage1_models = [m for m in cfg["stage1_image_models"] if m["enabled"]]
-    stage2_models = [m for m in cfg["stage2_video_models"] if m["enabled"]]
+    stage1_models = [m for m in cfg["stage1_image_models"] if m.get("enabled", True)]
+    composition_hint = size.get("composition_hint", "")
 
-    if filter_model:
-        stage2_models = [m for m in stage2_models if m["id"] == filter_model]
+    # Reinforces the audience requirement — the specific audience type is already
+    # described in the stage1 prompt generated by step_02 from the brief's audience_context field.
+    _AUDIENCE = (
+        "The scene must include a visible audience in the background appropriate to the setting. "
+        "The performer is the focus but audience members must be clearly present."
+    )
 
-    # Determine stage1 prompt and reference image
-    if is_billboard:
-        # Billboard: atmospheric texture generated from the hero (1920x1080) stage1 image
-        # as a style reference rather than the raw product PNG.
-        stage1_prompt = copy.get(
-            "background_prompt_billboard",
-            "Abstract atmospheric texture. Cinematic bokeh, warm depth, painterly. No objects or people.",
-        )
-        hero_img = _find_hero_stage1_image(product_id, model_id, variant_id, cfg)
-        stage1_reference = hero_img if hero_img else asset_png
-        if not hero_img:
-            print(f"    [billboard] No hero image found — using product PNG as fallback reference")
-    else:
-        stage1_prompt = copy["background_prompt_stage1"]
-        # Append per-size composition hint so the subject lands in the right area of frame
-        composition_hint = size.get("composition_hint", "")
+    if is_billboard and master_ref is not None:
+        # Billboard: extend the hero scene to ultra-wide — uses its own ref_type so the
+        # instruction in generate_stage1 says "extend wide" rather than "crop tighter"
+        stage1_prompt = copy.get("background_prompt_stage1", "")
         if composition_hint:
             stage1_prompt = f"{stage1_prompt} {composition_hint}"
-        stage1_reference = asset_png
+        stage1_prompt = f"{stage1_prompt} {_AUDIENCE}"
+        asset_for_stage1 = master_ref
+        ref_type = "billboard"
+    elif master_ref is not None:
+        # Non-hero size with an approved hero — reframe around performer at new aspect ratio
+        stage1_prompt = copy.get("background_prompt_stage1", "")
+        if composition_hint:
+            stage1_prompt = f"{stage1_prompt} {composition_hint}"
+        stage1_prompt = f"{stage1_prompt} {_AUDIENCE}"
+        asset_for_stage1 = master_ref
+        ref_type = "master"
+    else:
+        # Hero / primary size — use the client's product photo to establish the instrument
+        stage1_prompt = copy.get("background_prompt_stage1", "")
+        if composition_hint:
+            stage1_prompt = f"{stage1_prompt} {composition_hint}"
+        stage1_prompt = f"{stage1_prompt} {_AUDIENCE}"
+        asset_for_stage1 = asset_png
+        ref_type = "product"
 
-    # Stage 1: run all enabled image models
+    # Stage 1: image generation
     stage1_results: dict[str, Path] = {}
-    primary_id = next((m["id"] for m in stage1_models if m.get("primary")), None)
+    primary_id = next(
+        (m["id"] for m in stage1_models if m.get("primary")),
+        stage1_models[0]["id"] if stage1_models else None,
+    )
 
     for img_model in stage1_models:
         result = await generate_stage1(
-            fal_path=img_model.get("fal_path"),
             model_id=img_model["id"],
-            provider=img_model.get("provider", "fal"),
-            asset_png=stage1_reference,
+            gemini_model=img_model.get("gemini_model", "gemini-3.1-flash-image-preview"),
             prompt=stage1_prompt,
             size_id=size_id,
             gen_width=gen_width,
             gen_height=gen_height,
-            is_billboard=is_billboard,
             out_dir=out_dir,
             gen_index=gen_index,
             skip_existing=skip,
+            asset_png=asset_for_stage1,
+            brand_look=brand_look,
+            ref_type=ref_type,
+            product_ref=asset_png if ref_type == "master" else None,
         )
         if result:
             stage1_results[img_model["id"]] = result
 
-    # Choose the primary stage1 image for stage2 (or first available)
-    stage1_for_video = stage1_results.get(primary_id) or next(iter(stage1_results.values()), None)
-    if not stage1_for_video:
-        print(f"    Skipping Stage2 — no Stage1 image for {product_id}/{model_id}/{variant_id}/{size_id}")
-        return
-
-    # Stage 2: animate using primary stage1 image as starting frame
-    for vid_model in stage2_models:
-        await generate_stage2(
-            fal_path=vid_model["fal_path"],
-            model_id=vid_model["id"],
-            stage1_image=stage1_for_video,
-            prompt=copy["background_prompt_stage2"],
-            size_id=size_id,
-            out_dir=out_dir,
-            gen_index=gen_index,
-            skip_existing=skip,
-        )
+    primary_stage1 = stage1_results.get(primary_id) or next(iter(stage1_results.values()), None)
+    return primary_stage1
 
 
 def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
@@ -313,25 +396,25 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
     manifest = json.loads((DATA / "asset_manifest.json").read_text())
     copy_manifest = json.loads((DATA / "copy_manifest.json").read_text())
 
-    # Build lookup: (product_id, model_id, variant_id) → asset_png
     asset_lookup: dict[tuple, Path] = {}
     for match in manifest["matches"]:
         key = (match["product_id"], match["model_id"], match["variant_id"])
         asset_lookup[key] = Path(match["asset_png"])
 
-    # Build copy lookup: (product_id, model_id, variant_id, locale_id) → copy
     copy_lookup: dict[tuple, dict] = {}
     for entry in copy_manifest["variants"]:
         for locale_id, copy in entry["locales"].items():
             key = (entry["product_id"], entry["model_id"], entry["variant_id"], locale_id)
             copy_lookup[key] = copy
 
-    # Build work list
+    size_lookup = _build_size_lookup(cfg)
     tasks = []
     locales = brief["locales"]
 
-    preview_asset = cfg.get("preview_asset_id", "sax1")
-    preview_size_id = _normalize_size_id(cfg.get("preview_size_id", cfg.get("preview_aspect_ratio", "1920x1080")))
+    preview_asset = cfg.get("preview_asset_id") or ""
+    if not preview_asset and manifest.get("matches"):
+        preview_asset = manifest["matches"][0]["asset_stem"]
+        print(f"  Preview: no asset selected — auto-selecting '{preview_asset}'")
 
     for product in brief["products"]:
         for model_entry in product["models"]:
@@ -352,7 +435,7 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
                     if filter_aspect and size_id != _normalize_size_id(filter_aspect):
                         continue
 
-                    if preview and (Path(asset_png).stem != preview_asset or size_id != preview_size_id):
+                    if preview and Path(asset_png).stem != preview_asset:
                         continue
 
                     locale_for_prompt = filter_locale or "en"
@@ -366,28 +449,50 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
                         continue
 
                     out_dir = _out_dir(product["id"], model_entry["id"], variant["id"], size_id)
-                    gen_index = _next_gen_index(out_dir)
+                    primary_model_id = next(
+                        (m["id"] for m in cfg.get("stage1_image_models", []) if m.get("primary")),
+                        cfg.get("stage1_image_models", [{}])[0].get("id") if cfg.get("stage1_image_models") else None,
+                    )
+                    gen_index = _next_gen_index(out_dir, primary_model_id)
 
                     tasks.append((
                         product["id"], model_entry["id"], variant["id"],
-                        asset_png, size_id, copy, cfg, gen_index, filter_model
+                        asset_png, size_id, copy, cfg, gen_index
                     ))
 
     if dry_run:
-        print(f"  [DRY RUN] Would generate backgrounds for {len(tasks)} variant/aspect combinations")
+        print(f"  [DRY RUN] Would generate backgrounds for {len(tasks)} variant/size combinations")
         return
 
-    # Sort so billboard sizes run after non-billboard — billboard stage1 references the
-    # hero (1920x1080) stage1 result, which must exist before billboard is processed.
-    size_lookup = _build_size_lookup(cfg)
-    tasks.sort(key=lambda t: 1 if size_lookup.get(t[4], {}).get("billboard", False) else 0)
-
     if preview:
-        print(f"  Preview mode — {len(tasks)} combination(s) for asset '{preview_asset}' / {preview_size_id}")
+        sizes_label = ", ".join(sorted(set(t[4] for t in tasks)))
+        print(f"  Preview mode — {len(tasks)} combination(s) for asset '{preview_asset}' / {sizes_label}")
+
+    # Split into hero (1920x1080) and all other sizes.
+    # Hero runs first so its output can be used as the consistency reference for 1x1 and billboard.
+    HERO_SIZE = "1920x1080"
+    hero_tasks  = [t for t in tasks if t[4] == HERO_SIZE]
+    other_tasks = [t for t in tasks if t[4] != HERO_SIZE]
 
     async def run_all():
-        for args in tasks:
-            await process_variant(*args)
+        # (product_id, model_id, variant_id) → generated hero PNG path
+        hero_results: dict[tuple, Path] = {}
+
+        for task in hero_tasks:
+            p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi = task
+            result = await process_variant(
+                p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi,
+            )
+            if result:
+                hero_results[(p_id, m_id, v_id)] = result
+
+        for task in other_tasks:
+            p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi = task
+            master_ref = hero_results.get((p_id, m_id, v_id))
+            await process_variant(
+                p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi,
+                master_ref=master_ref,
+            )
 
     asyncio.run(run_all())
     print(f"  Background generation complete — {len(tasks)} targets processed")
