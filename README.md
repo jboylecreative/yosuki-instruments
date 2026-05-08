@@ -44,7 +44,7 @@ The `sample_assets/` folder in the project root contains everything needed to ru
 ```
 On Windows:
 
-pip3 install -r requirements.txt
+pip install -r requirements.txt
 
 or on Mac use:
 
@@ -73,7 +73,13 @@ Open `.env` and fill in your `GEMINI_API_KEY`.
 ## Start the server
 
 ```
+On Windows:
+
 python -m uvicorn app.main:app --reload
+
+On Mac:
+
+python3 -m uvicorn app.main:app --reload
 ```
 
 Open [http://localhost:8000](http://localhost:8000)
