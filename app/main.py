@@ -175,6 +175,15 @@ async def dashboard(request: Request):
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
         asset_matches = manifest.get("matches", [])
+    elif assets_ready:
+        # Manifest not generated yet — build a minimal list from uploaded filenames
+        assets_dir = UPLOADS_PATH / "assets"
+        asset_matches = [
+            {"asset_stem": f.stem}
+            for f in sorted(assets_dir.rglob("*"))
+            if f.is_file() and f.suffix.lower() in {".png", ".glb"}
+            and f.stem.lower() != "logo"
+        ]
 
     return templates.TemplateResponse("dashboard.html", {
         "request": request,

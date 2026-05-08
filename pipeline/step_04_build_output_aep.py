@@ -357,10 +357,7 @@ def run(cfg: dict, dry_run: bool = False, preview: bool = False):
 
     jobs = build_jobs(brief, copy_manifest, cfg, run_timestamp, master_aep)
     if preview:
-        preview_asset = cfg.get("preview_asset_id", "").strip()
-        if preview_asset:
-            jobs = [j for j in jobs if j.get("asset_stem") == preview_asset]
-            print(f"  Preview mode — filtered to asset '{preview_asset}'")
+        print(f"  Preview mode — all assets, en only")
     print(f"  Built {len(jobs)} render jobs")
     print(f"  Output dir: {run_dir}")
 

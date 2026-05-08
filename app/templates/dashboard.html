@@ -6,108 +6,34 @@
   <title>Motion Graphics Pipeline</title>
   <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
   <style>
-    /* ── Output Location compact ── */
-    .dest-compact {
-      display: flex;
-      align-items: center;
-      gap: .75rem;
-      flex-wrap: wrap;
-    }
-    .dest-compact .dest-path-label {
-      font-size: .82rem;
-      color: var(--muted);
-      flex: 1;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .dest-drive-hint {
-      font-size: .85rem;
-      color: var(--muted);
-      padding: .5rem 0;
-    }
+    .dest-compact { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+    .dest-compact .dest-path-label { font-size: .82rem; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dest-drive-hint { font-size: .82rem; color: var(--muted); }
 
-    /* ── Drive connection badge ── */
-    .drive-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: .4rem;
-      font-size: .82rem;
-      padding: .25rem .65rem;
-      border-radius: 20px;
-      font-weight: 600;
-    }
-    .drive-badge.connected {
-      background: rgba(76,175,80,.15);
-      color: var(--ok, #4caf50);
-      border: 1px solid rgba(76,175,80,.3);
-    }
-    .drive-badge.disconnected {
-      background: rgba(136,136,136,.1);
-      color: var(--muted);
-      border: 1px solid var(--border);
-    }
+    .drive-badge { display: inline-flex; align-items: center; gap: .4rem; font-size: .75rem; padding: .2rem .6rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border: 1.5px solid; }
+    .drive-badge.connected { color: var(--ok); border-color: var(--ok); background: transparent; }
+    .drive-badge.disconnected { color: var(--muted); border-color: var(--border); background: transparent; }
 
-    /* ── Big run button ── */
-    .btn-run {
-      padding: 1rem 3rem;
-      font-size: 1.1rem;
-      font-weight: 700;
-      background: var(--accent);
-      color: #000;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: opacity .15s, transform .1s;
-      width: 100%;
-      max-width: 400px;
-    }
-    .btn-run:hover:not(:disabled) { opacity: .9; transform: translateY(-1px); }
-    .btn-run:disabled { opacity: .35; cursor: not-allowed; transform: none; }
-    .run-note { font-size: .8rem; color: var(--muted); }
-
-    /* ── Run status / spinner ── */
-    #run-status {
-      display: none;
-      align-items: center;
-      gap: .75rem;
-      padding: .9rem 1.1rem;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      margin-bottom: 1.25rem;
-    }
+    #run-status { display: none; align-items: center; gap: .75rem; padding: .85rem 1rem; border: 1.5px solid var(--border); margin-bottom: 1.5rem; }
     #run-status.visible { display: flex; }
-    .run-spinner {
-      width: 18px;
-      height: 18px;
-      border: 2.5px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin .7s linear infinite;
-      flex-shrink: 0;
-    }
-    .run-spinner.done {
-      border-color: var(--ok, #4caf50);
-      animation: none;
-    }
+    .run-spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; flex-shrink: 0; }
+    .run-spinner.done { border-color: var(--ok); animation: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    #run-status-text {
-      font-size: .9rem;
-      color: var(--text);
-      flex: 1;
-    }
+    #run-status-text { font-size: .85rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text); flex: 1; }
+
+    .preview-box { border: 1.5px solid var(--border); padding: 1.25rem; margin-bottom: 1.25rem; }
+    .preview-box strong { font-size: 1rem; font-weight: 900; text-transform: uppercase; letter-spacing: -.01em; display: block; margin-bottom: .35rem; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Motion Graphics Pipeline</h1>
-    <button id="reset-btn" class="btn secondary small"
-            style="margin-left:auto;opacity:.6;"
-            title="Clear all uploads, parsed data, and project settings">
-      Reset
-    </button>
+    <div class="header-nav">
+      <button id="reset-btn" class="btn secondary small"
+              title="Clear all uploads, parsed data, and project settings">
+        Reset
+      </button>
+    </div>
+    <h1 class="display-title">AE Automation</h1>
   </header>
 
   <main>
@@ -167,10 +93,8 @@
             <span>{{ s.label }}</span>
             <em class="size-res">{{ s.width }}×{{ s.height }}</em>
           </label>
-          {% if not s.billboard %}
           <button class="btn small danger remove-size-btn" data-id="{{ s.id }}"
                   title="Remove size">×</button>
-          {% endif %}
         </div>
         {% endfor %}
       </div>
@@ -207,7 +131,7 @@
       <div class="dest-panel" id="dest-local"
            {% if config.output_destination.type == 'drive' %}style="display:none"{% endif %}>
         <div class="dest-compact">
-          <button class="btn secondary small" id="browse-btn">Browse…</button>
+          <button class="btn accent small" id="browse-btn">Browse…</button>
           <span class="dest-path-label" id="dest-path-display"
                 title="{{ config.output_destination.local_path }}"
                 style="{% if not config.output_destination.local_path %}color:var(--muted);font-style:italic;{% endif %}">
@@ -242,7 +166,7 @@
     </section>
 
     <!-- ── Step 6: Run ── -->
-    <section class="card" style="padding:2rem;">
+    <section class="card">
       <h2><span class="step">6</span> Run</h2>
 
       <!-- Run status indicator -->
@@ -252,35 +176,21 @@
       </div>
 
       <!-- Preview -->
-      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
-          <div>
-            <strong style="font-size:.95rem;">Preview — selected asset, English, all sizes</strong>
-            <p style="font-size:.82rem;color:var(--muted);margin-top:.3rem;">
-              Runs the full pipeline for the selected asset in English across all enabled sizes — so you can review backgrounds, copy, and layout before committing to the full batch.
-            </p>
-          </div>
-          <div style="display:flex;align-items:center;gap:.5rem;flex-shrink:0;">
-            {% if asset_matches %}
-            <select id="preview-asset-select" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:.4rem .7rem;font-size:.85rem;">
-              {% for m in asset_matches %}
-              <option value="{{ m.asset_stem }}"
-                {% if m.asset_stem == config.preview_asset_id %}selected{% endif %}>
-                {{ m.asset_stem }}
-              </option>
-              {% endfor %}
-            </select>
-            {% endif %}
-            <button id="preview-btn" class="btn secondary"
-                    {% if not run_ready %}disabled{% endif %}>
-              Preview Run
-            </button>
-          </div>
+      <div class="preview-box">
+        <strong>Preview — all assets, English, all sizes</strong>
+        <p style="font-size:.82rem;color:var(--muted);margin-bottom:.85rem;">
+          Runs the full pipeline for all assets in English across all enabled sizes — review backgrounds, copy, and layout before the full batch.
+        </p>
+        <div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;">
+          <button id="preview-btn" class="btn accent"
+                  {% if not run_ready %}disabled{% endif %}>
+            Preview Run
+          </button>
         </div>
       </div>
 
       <!-- Full batch -->
-      <div style="display:flex;flex-direction:column;align-items:center;gap:.75rem;padding-top:.5rem;">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:.85rem;padding-top:.25rem;">
         <button id="batch-btn" class="btn-run" {% if not run_ready %}disabled{% endif %}>
           Generate &amp; Render All
         </button>

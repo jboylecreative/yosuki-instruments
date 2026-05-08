@@ -46,14 +46,21 @@ function setupDrop(dropId, inputId, uploadFn) {
 
 async function uploadBrief(files) {
   if (!files || files.length === 0) return;
+  showStatus('brief-drop', 'Uploading…');
   const fd = new FormData();
   fd.append('brief', files[0]);
-  const r = await fetch('/upload/brief', { method: 'POST', body: fd });
-  const data = await r.json();
-  if (data.status === 'ok') {
-    showStatus('brief-drop', `Uploaded: ${data.filename} ✓`);
-    _briefReady = true;
-    _updateRunButtons();
+  try {
+    const r = await fetch('/upload/brief', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (data.status === 'ok') {
+      showStatus('brief-drop', `Uploaded: ${data.filename} ✓`, true);
+      _briefReady = true;
+      _updateRunButtons();
+    } else {
+      showStatus('brief-drop', `Upload error: ${JSON.stringify(data)}`);
+    }
+  } catch (e) {
+    showStatus('brief-drop', `Upload failed: ${e.message}`);
   }
 }
 
@@ -69,7 +76,7 @@ async function uploadAssets(files) {
     const r = await fetch('/upload/assets', { method: 'POST', body: fd });
     const data = await r.json();
     if (data.status === 'ok') {
-      showStatus('asset-drop', `Uploaded ${data.count} file(s) ✓`);
+      showStatus('asset-drop', `Uploaded ${data.count} file(s) ✓`, true);
       _assetsReady = true;
       _updateRunButtons();
     } else {
@@ -80,10 +87,15 @@ async function uploadAssets(files) {
   }
 }
 
-function showStatus(dropId, msg) {
+
+function showStatus(dropId, msg, success) {
   const drop = document.getElementById(dropId);
   if (!drop) return;
   drop.innerHTML = `<p style="color:var(--ok)">${msg}</p>`;
+  if (success) {
+    const card = drop.closest('.card');
+    if (card) card.classList.add('done');
+  }
 }
 
 // ── SSE progress ─────────────────────────────────────────────────────────────
@@ -97,7 +109,7 @@ function startProgress(run_id) {
   const statusText = document.getElementById('run-status-text');
   const spinner = document.getElementById('run-spinner');
 
-  if (section) section.hidden = false;
+  if (section) { section.hidden = false; section.classList.add('done'); }
   if (log) log.innerHTML = '';
   if (status) status.classList.add('visible');
   if (spinner) spinner.classList.remove('done');
@@ -152,6 +164,8 @@ function startProgress(run_id) {
 
 let _briefReady = false;
 let _assetsReady = false;
+let _locationReady = false;
+let _nameReady = false;
 
 function _updateRunButtons() {
   const ready = _briefReady && _assetsReady;
@@ -161,6 +175,17 @@ function _updateRunButtons() {
   });
   const note = document.querySelector('.run-note');
   if (note && ready) note.textContent = 'Parses brief, generates backgrounds, and renders every variant across all enabled sizes.';
+
+  const allReady = _briefReady && _assetsReady && _locationReady && _nameReady;
+  const runCard = document.querySelector('#progress-section')?.previousElementSibling;
+  // find the Run section card by its step badge text
+  const runSection = Array.from(document.querySelectorAll('.card')).find(
+    c => c.querySelector('.step')?.textContent.trim() === '6'
+  );
+  if (runSection) {
+    if (allReady) runSection.classList.add('done');
+    else runSection.classList.remove('done');
+  }
 }
 
 // ── Button wiring ─────────────────────────────────────────────────────────────
@@ -216,6 +241,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const display = document.getElementById('dest-path-display');
         if (display) { display.textContent = path; display.title = path; }
         await _saveDest();
+        const card = browseBtn.closest('.card');
+        if (card) card.classList.add('done');
+        _locationReady = true;
+        _updateRunButtons();
       }
     });
   }
@@ -261,7 +290,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const _drivePanel = document.getElementById('dest-drive');
   if (_drivePanel && !_drivePanel.hidden) refreshDriveStatus();
 
-  // local-path is a hidden input updated only via the browse button
+  // Mark Output Location card done on load if a local path is already configured
+  const _existingPath = document.getElementById('local-path')?.value;
+  if (_existingPath && _existingPath !== './output') {
+    const _destCard = document.getElementById('dest-local')?.closest('.card');
+    if (_destCard) _destCard.classList.add('done');
+    _locationReady = true;
+  }
+
+  // Project name — track readiness
+  const _nameInput = document.getElementById('project-name');
+  if (_nameInput) {
+    _nameReady = _nameInput.value.trim().length > 0;
+    _nameInput.addEventListener('input', () => {
+      _nameReady = _nameInput.value.trim().length > 0;
+      _updateRunButtons();
+    });
+  }
+
+  // Brief/assets may already be ready from server-side state
+  if (document.querySelector('.card.done #brief-drop')) _briefReady = true;
+  if (document.querySelector('.card.done #asset-drop')) _assetsReady = true;
+  _updateRunButtons();
 
   // ── Model toggles (advanced mode) ───────────────────────────────────────────
   const saveModels = document.getElementById('save-models-btn');
@@ -356,12 +406,20 @@ async function refreshDriveStatus() {
         folderLink.href = folder_url || '#';
         folderLink.style.display = folder_url ? '' : 'none';
       }
+      const card = badge.closest('.card');
+      if (card) card.classList.add('done');
+      _locationReady = true;
+      _updateRunButtons();
     } else {
       badge.className = 'drive-badge disconnected';
       badge.textContent = 'Not connected';
       if (connectBtn)     connectBtn.style.display  = '';
       if (disconnectBtn)  disconnectBtn.style.display = 'none';
       if (folderLink)     folderLink.style.display   = 'none';
+      const card = badge.closest('.card');
+      if (card) card.classList.remove('done');
+      _locationReady = false;
+      _updateRunButtons();
     }
   } catch (_) { /* non-fatal — server may be starting */ }
 }
@@ -417,4 +475,22 @@ async function disconnectDrive() {
         }, 3000);
       });
   };
+}());
+
+// ── Display title: scale to fill full viewport width ──────────────────────
+(function () {
+  var title = document.querySelector('.display-title');
+  if (!title) return;
+
+  function fitTitle() {
+    title.style.fontSize = '100px';
+    var containerW = document.documentElement.clientWidth;
+    var textW = title.scrollWidth;
+    if (textW > 0 && containerW > 0) {
+      title.style.fontSize = Math.floor(100 * containerW / textW) + 'px';
+    }
+  }
+
+  fitTitle();
+  window.addEventListener('resize', fitTitle);
 }());

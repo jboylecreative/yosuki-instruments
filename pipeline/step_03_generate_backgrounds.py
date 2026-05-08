@@ -8,6 +8,7 @@ Output structure:
     stage1/{img_model_id}/gen_001.png
 """
 import asyncio
+from collections import defaultdict
 import io
 import json
 import os
@@ -411,11 +412,6 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
     tasks = []
     locales = brief["locales"]
 
-    preview_asset = cfg.get("preview_asset_id") or ""
-    if not preview_asset and manifest.get("matches"):
-        preview_asset = manifest["matches"][0]["asset_stem"]
-        print(f"  Preview: no asset selected — auto-selecting '{preview_asset}'")
-
     for product in brief["products"]:
         for model_entry in product["models"]:
             for variant in model_entry["variants"]:
@@ -433,9 +429,6 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
                     size_id = _normalize_size_id(size_id_raw)
 
                     if filter_aspect and size_id != _normalize_size_id(filter_aspect):
-                        continue
-
-                    if preview and Path(asset_png).stem != preview_asset:
                         continue
 
                     locale_for_prompt = filter_locale or "en"
@@ -465,34 +458,46 @@ def run(cfg: dict, preview: bool = False, filter_asset: str | None = None,
         return
 
     if preview:
-        sizes_label = ", ".join(sorted(set(t[4] for t in tasks)))
-        print(f"  Preview mode — {len(tasks)} combination(s) for asset '{preview_asset}' / {sizes_label}")
-
-    # Split into hero (1920x1080) and all other sizes.
-    # Hero runs first so its output can be used as the consistency reference for 1x1 and billboard.
-    HERO_SIZE = "1920x1080"
-    hero_tasks  = [t for t in tasks if t[4] == HERO_SIZE]
-    other_tasks = [t for t in tasks if t[4] != HERO_SIZE]
+        print(f"  Preview mode — {len(tasks)} combination(s) across all assets / en only")
 
     async def run_all():
-        # (product_id, model_id, variant_id) → generated hero PNG path
-        hero_results: dict[tuple, Path] = {}
+        HERO_SIZE = "1920x1080"
+        max_concurrent = cfg.get("gemini_concurrency", 4)
+        sem = asyncio.Semaphore(max_concurrent)
 
-        for task in hero_tasks:
-            p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi = task
-            result = await process_variant(
-                p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi,
-            )
-            if result:
-                hero_results[(p_id, m_id, v_id)] = result
+        async def guarded(coro):
+            async with sem:
+                return await coro
 
-        for task in other_tasks:
-            p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi = task
-            master_ref = hero_results.get((p_id, m_id, v_id))
-            await process_variant(
-                p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi,
-                master_ref=master_ref,
-            )
+        variant_groups: dict[tuple, list] = defaultdict(list)
+        for task in tasks:
+            variant_groups[(task[0], task[1], task[2])].append(task)
+
+        async def run_variant(variant_tasks: list) -> None:
+            hero   = [t for t in variant_tasks if t[4] == HERO_SIZE]
+            others = [t for t in variant_tasks if t[4] != HERO_SIZE]
+
+            master_ref = None
+            if hero:
+                p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi = hero[0]
+                result = await guarded(
+                    process_variant(p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi)
+                )
+                if result:
+                    master_ref = result
+
+            if others:
+                async def run_other(task):
+                    p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi = task
+                    await guarded(
+                        process_variant(
+                            p_id, m_id, v_id, a_png, s_id, cp, cfg_, gi,
+                            master_ref=master_ref,
+                        )
+                    )
+                await asyncio.gather(*[run_other(t) for t in others])
+
+        await asyncio.gather(*[run_variant(vt) for vt in variant_groups.values()])
 
     asyncio.run(run_all())
     print(f"  Background generation complete — {len(tasks)} targets processed")
