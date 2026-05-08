@@ -42,7 +42,13 @@ The `sample_assets/` folder in the project root contains everything needed to ru
 ### 1. Install Python dependencies
 
 ```
+On Windows:
+
 pip3 install -r requirements.txt
+
+or on Mac use:
+
+python3 -m uvicorn app.main:app --reload
 
 ```
 
@@ -61,14 +67,6 @@ cp .env.example .env
 ```
 
 Open `.env` and fill in your `GEMINI_API_KEY`.
-
-### 4. Create the AE master template (once)
-
-Open After Effects → **File → Scripts → Run Script File** → select `scripts/create_template.jsx`
-
-The script builds three placeholder compositions (YouTube 16:9, Instagram 1:1, Billboard) with the correct named layers and animation keyframes, and saves to `templates/master_template.aep` automatically.
-
-This is the only step that opens After Effects. All pipeline runs after this are fully headless.
 
 ---
 
