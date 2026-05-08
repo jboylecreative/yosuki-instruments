@@ -1,0 +1,9 @@
+{
+  "name": "motion-graphics-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "nexrender-cli is used by step_04_build_output_aep.py to run build_output_aep.jsx headlessly via aerender",
+  "dependencies": {
+    "@nexrender/cli": "^1.63.3"
+  }
+}

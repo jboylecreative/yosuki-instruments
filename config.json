@@ -1,0 +1,65 @@
+{
+  "project_name": "Yosuki Spring 2026",
+  "sizes": [
+    {
+      "id": "1920x1080",
+      "label": "YouTube / 16:9",
+      "comp_name": "YouTube_1920x1080",
+      "width": 1920,
+      "height": 1080,
+      "gen_width": 3840,
+      "gen_height": 2160,
+      "billboard": false,
+      "enabled": true,
+      "composition_hint": ""
+    },
+    {
+      "id": "1080x1080",
+      "label": "Instagram / 1:1",
+      "comp_name": "Instagram_1080x1080",
+      "width": 1080,
+      "height": 1080,
+      "gen_width": 2160,
+      "gen_height": 2160,
+      "billboard": false,
+      "enabled": true,
+      "composition_hint": ""
+    },
+    {
+      "id": "970x250",
+      "label": "Billboard",
+      "comp_name": "Billboard_970x250",
+      "width": 970,
+      "height": 250,
+      "gen_width": 1940,
+      "gen_height": 500,
+      "billboard": true,
+      "enabled": true,
+      "composition_hint": ""
+    }
+  ],
+  "stage1_image_models": [
+    {
+      "id": "nano-banana-2",
+      "provider": "gemini",
+      "gemini_model": "gemini-3.1-flash-image-preview",
+      "enabled": true,
+      "primary": true,
+      "label": "Nano Banana 2"
+    }
+  ],
+  "brand_look": "Shot on Arri Alexa with Cooke Anamorphic 14mm lenses. Subtle anamorphic lens flares. Sharp, high-contrast cinematography.",
+  "generations_per_model": 1,
+  "skip_existing": true,
+  "preview_asset_id": "",
+  "preview_size_id": "1920x1080",
+  "aerender_path": "",
+  "assets_folder": "./fde_asset_bundle",
+  "master_template_path": "./templates/master_template.aep",
+  "output_destination": {
+    "type": "drive",
+    "local_path": "./output",
+    "drive_folder_id": "",
+    "drive_folder_url": ""
+  }
+}
