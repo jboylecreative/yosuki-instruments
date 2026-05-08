@@ -306,6 +306,34 @@ var TEXT_SCALE_FLOOR     = 0.62; // never shrink below 62% of the template font 
         return derived;
     }
 
+    // ── Re-link broken master-template logo footage ──────────────────────────
+    // The master AEP may have been saved on a different machine with a logo
+    // path that doesn't exist locally (e.g. C:\Users\OtherUser\...\logo.png).
+    // Find any FootageItem whose source file is missing AND whose filename
+    // looks like a logo, and re-link it to cfg.logo_path. This makes every
+    // comp that references it (including the master comps used as srcComp)
+    // automatically use the local logo, even if the per-layer swap below misses.
+    if (cfg.logo_path) {
+        var localLogoFile = new File(cfg.logo_path);
+        if (localLogoFile.exists) {
+            for (var ri = 1; ri <= project.numItems; ri++) {
+                var rItem = project.item(ri);
+                if (rItem instanceof FootageItem && rItem.file && !rItem.file.exists) {
+                    var fname = String(rItem.file.name).toLowerCase();
+                    if (fname.indexOf("logo") >= 0) {
+                        try {
+                            rItem.replace(localLogoFile);
+                            $.writeln("Re-linked broken logo footage '" + rItem.name +
+                                      "' → " + cfg.logo_path);
+                        } catch (e) {
+                            $.writeln("  Warning: could not re-link " + rItem.name + ": " + e.message);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Pre-import the logo (shared across all comps) ─────────────────────────
     var logoItem = null;
     if (cfg.logo_path) {

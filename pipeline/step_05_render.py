@@ -1,19 +1,19 @@
 """
-Step 5: Render all variant comps via a single aerender session, then batch-encode to MP4.
+Step 5: Render every variant comp with its own aerender invocation, then batch-encode to MP4.
 
 Reads data/aep_build_config.json for the output AEP path and job list.
-Step 4 baked all comps into the output AEP's render queue (lossless output).
-A single aerender call processes every queued item — one AE startup, one project load.
+Each job triggers a dedicated `aerender -comp <name>` call: one comp per process.
+This is slower than a single batched session (every call pays ~35-40s of AE startup),
+but a failure in one comp can't cascade into the rest of the queue — which is what
+we observed when running 30 items in a single aerender session on some machines.
 FFmpeg then batch-encodes the lossless files to H.264 MP4 and cleans up the intermediates.
-
-This replaces the previous nexrender-per-comp approach, which paid the AE startup
-and project-load cost (35-40 seconds) once per comp.
 """
 import json
 import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,6 +22,43 @@ ROOT = Path(__file__).parent.parent
 load_dotenv(ROOT / ".env")
 
 DATA = ROOT / "data"
+
+
+def _ae_is_running() -> bool:
+    """Return True if an AfterFX or aerender process is currently running."""
+    if sys.platform == "win32":
+        for exe in ("AfterFX.exe", "aerender.exe"):
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {exe}", "/NH"],
+                capture_output=True, text=True,
+            )
+            if exe.lower() in result.stdout.lower():
+                return True
+        return False
+    else:
+        # macOS: pgrep -xi matches exact process name, case-insensitive
+        for name in ("aerender", "After Effects"):
+            result = subprocess.run(
+                ["pgrep", "-xi", name],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                return True
+        return False
+
+
+def _wait_for_ae_exit(timeout: int = 60) -> None:
+    """Wait for any lingering AfterFX/aerender processes to exit before starting a new session."""
+    deadline = time.time() + timeout
+    warned = False
+    while time.time() < deadline:
+        if not _ae_is_running():
+            return
+        if not warned:
+            print("  Waiting for previous After Effects process to exit...")
+            warned = True
+        time.sleep(2)
+    print(f"  WARNING: After Effects process still running after {timeout}s — aerender may fail")
 
 
 def _find_aerender(cfg_path: str) -> str:
@@ -83,7 +120,7 @@ def run(cfg: dict, dry_run: bool = False):
     print(f"  {total} comps queued in {output_aep.name}")
 
     if dry_run:
-        print(f"  [DRY RUN] Would render {total} comps via single aerender session")
+        print(f"  [DRY RUN] Would render {total} comps via per-comp aerender calls")
         return
 
     aerender_path = _find_aerender(
@@ -91,14 +128,72 @@ def run(cfg: dict, dry_run: bool = False):
     )
     print(f"  aerender: {aerender_path}")
 
-    # Single aerender call — opens the output AEP once, renders the full queue
-    print(f"  Starting aerender session (renders all {total} comps)...")
-    cmd = [aerender_path, "-project", str(output_aep)]
-    result = subprocess.run(cmd, text=True)
+    # Per-comp aerender calls — isolate each render so a failure in one comp
+    # can't kill the rest of the queue. Each call costs ~35-40s of AE startup
+    # but the pipeline survives individual failures and we get clear per-comp logs.
+    print(f"  Rendering {total} comps individually (one aerender call per comp)...")
+    ae_log = output_aep.parent / "aerender_step5.log"
+    rendered = 0
+    render_failed: list[str] = []
 
-    if result.returncode != 0:
-        print(f"  ERROR: aerender exited with code {result.returncode}")
-        return
+    for idx, job in enumerate(jobs, 1):
+        comp_name = job["comp_name"]
+        lossless_path = Path(job["output_lossless_path"])
+        out_path = Path(job["output_path"])
+
+        # If the final MP4 is already there and skip_existing is set, skip both
+        # the render and the encode for this comp.
+        if out_path.exists() and cfg.get("skip_existing"):
+            print(f"  [{idx}/{total}] {comp_name} — already encoded, skipping")
+            rendered += 1
+            continue
+
+        # Wait for any prior AE instance (from Step 4 or the previous comp) to
+        # fully exit. aerender fails with "Error Code: 1" if a prior AE process
+        # is still shutting down.
+        _wait_for_ae_exit()
+
+        lossless_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Use the render queue item settings the JSX already baked into the AEP
+        # (output path, OM template, render settings). Passing -output / -OMtemplate
+        # / -RStemplate on the CLI alongside an existing queue item produces an
+        # exit-0-but-no-output failure mode on AE 2026.
+        print(f"  [{idx}/{total}] Rendering {comp_name}...")
+        cmd = [
+            aerender_path,
+            "-project", str(output_aep),
+            "-comp", comp_name,
+            "-log", str(ae_log),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode == 0 and lossless_path.exists():
+            print(f"  [{idx}/{total}] -> {comp_name}")
+            rendered += 1
+        else:
+            print(f"  [{idx}/{total}] ERROR: {comp_name} (exit code {result.returncode})")
+            # Show what aerender actually wrote where we expected output
+            if not lossless_path.exists():
+                siblings = sorted(p.name for p in lossless_path.parent.glob("*"))
+                print(f"    Expected: {lossless_path.name}")
+                print(f"    Actual files in {lossless_path.parent.name}/: {siblings or '(empty)'}")
+            if result.stderr.strip():
+                tail = "\n".join(result.stderr.strip().splitlines()[-5:])
+                print(f"    [stderr] {tail}")
+            if result.stdout.strip():
+                tail = "\n".join(result.stdout.strip().splitlines()[-10:])
+                print(f"    [stdout] {tail}")
+            if ae_log.exists():
+                log_text = ae_log.read_text(encoding="utf-8", errors="replace").strip()
+                if log_text:
+                    log_tail = "\n".join(log_text.splitlines()[-15:])
+                    print(f"    [aerender log] {log_tail}")
+            render_failed.append(comp_name)
+
+    print(f"  Rendered {rendered}/{total} comps")
+    if render_failed:
+        print(f"  Render failures ({len(render_failed)}): {', '.join(render_failed)}")
 
     # Batch encode lossless (AVI/MOV) → H.264 MP4
     print(f"  Encoding lossless renders to MP4...")

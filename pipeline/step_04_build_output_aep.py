@@ -123,6 +123,12 @@ def _find_best_bg_media(product_id: str, model_id: str, variant_id: str,
 
 
 def _logo_path(cfg: dict) -> str:
+    # Prefer the dashboard's uploads folder (where Step 1 also looks first), so
+    # the logo path matches whatever the user actually uploaded. Fall back to
+    # cfg.assets_folder only when uploads/assets/ doesn't exist.
+    uploads_logo = ROOT / "uploads" / "assets" / "logo.png"
+    if uploads_logo.exists():
+        return str(uploads_logo)
     assets_folder = cfg.get("assets_folder", "./fde_asset_bundle")
     base = Path(assets_folder) if Path(assets_folder).is_absolute() else (ROOT / assets_folder).resolve()
     return str(base / "logo.png")
