@@ -12,6 +12,7 @@ Brief-driven automated motion graphics pipeline. Ingests a campaign brief PDF + 
 | **Node.js 18+** | [nodejs.org](https://nodejs.org/) — required for nexrender, which builds the output AEP headlessly |
 | **Adobe After Effects 2026+** | Licensed install. The pipeline drives it headlessly via aerender + nexrender. |
 | **Gemini API key** | [aistudio.google.com](https://aistudio.google.com) — brief parsing, copy generation, and image generation |
+| **Google OAuth credentials** | Client ID + Client Secret from [console.cloud.google.com](https://console.cloud.google.com) — required for Google Drive delivery. See [Google Drive Delivery](#google-drive-delivery-step-7) below. |
 | **Century Gothic font** | Must be installed on the system — used in the After Effects template for all text layers. |
 
 ### Tool path auto-discovery
