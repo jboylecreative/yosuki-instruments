@@ -280,6 +280,7 @@ def _build_output_aep_headless(
     nxr_job = {
         "template": {
             "src": master_aep.as_uri(),
+            "useOriginal": True,
             "composition": "YouTube_1920x1080",
             "outputModule": "Lossless",
             "outputExt": lossless_ext,
@@ -291,6 +292,7 @@ def _build_output_aep_headless(
             {
                 "type": "script",
                 "src": jsx_runtime.as_uri(),
+                "useOriginal": True,
             }
         ],
     }

@@ -30,9 +30,8 @@ fi
 echo "Found: $AE_DIR"
 
 mkdir -p "$AE_DIR/Backup.Scripts/Startup"
-mkdir -p "$AE_DIR/Support Files/Startup"
 chown -R "$SUDO_USER" "$AE_DIR/Backup.Scripts"
-chown -R "$SUDO_USER" "$AE_DIR/Support Files/Startup"
+chown -R "$SUDO_USER" "$AE_DIR/Scripts/Startup"
 
 echo ""
 echo "Done. You can now run the pipeline normally."
